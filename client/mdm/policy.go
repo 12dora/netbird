@@ -20,10 +20,10 @@ import (
 // names (lowerCamelCase) so the daemon can map a Policy key directly to a
 // configuration field.
 const (
-	KeyManagementURL            = "managementURL"
-	KeyDisableUpdateSettings    = "disableUpdateSettings"
-	KeyDisableProfiles          = "disableProfiles"
-	KeyDisableNetworks          = "disableNetworks"
+	KeyManagementURL         = "managementURL"
+	KeyDisableUpdateSettings = "disableUpdateSettings"
+	KeyDisableProfiles       = "disableProfiles"
+	KeyDisableNetworks       = "disableNetworks"
 	// KeyDisableAdvancedView gates the advanced-view section in the
 	// upcoming UI revision. UI-only: NOT stored on Config, not
 	// applied by applyMDMPolicy, not rejectable via SetConfig. The
@@ -41,6 +41,8 @@ const (
 	KeyRosenpassEnabled         = "rosenpassEnabled"
 	KeyRosenpassPermissive      = "rosenpassPermissive"
 	KeyWireguardPort            = "wireguardPort"
+	KeyEnableLocalMetrics       = "enableLocalMetrics"
+	KeyLocalMetricsAddress      = "localMetricsAddress"
 
 	// Split tunnel is modeled as a single conceptual policy with two
 	// registry/plist values. KeySplitTunnelMode is the discriminator
