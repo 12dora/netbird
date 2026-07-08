@@ -176,6 +176,10 @@ func TestFlowAggregationOfUnknownProtocols(t *testing.T) {
 
 func TestResetAggregationWindow(t *testing.T) {
 	store := NewAggregatingMemoryStore()
+	// Backdate the window start: the reset below happens within the OS
+	// clock granularity (~15ms on Windows), which would otherwise make
+	// the old and new window start timestamps identical.
+	store.WindowStart = store.WindowStart.Add(-time.Second)
 	store.StoreEvent(&types.Event{
 		ID:        uuid.New(),
 		Timestamp: time.Now(),
