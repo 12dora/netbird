@@ -452,6 +452,163 @@ func TestCreateUser(t *testing.T) {
 	}
 }
 
+func TestPreCreateUser(t *testing.T) {
+	preCreatedID := "8a4b3c2d-1e5f-4a6b-9c7d-0e1f2a3b4c5d"
+	takenEmail := "taken@example.com"
+
+	var savedUser *types.User
+	var savedAddIfNotExists bool
+
+	newPreCreateTestHandler := func() *handler {
+		savedUser = nil
+		savedAddIfNotExists = false
+		return &handler{
+			accountManager: &mock_server.MockAccountManager{
+				GetUserByIDFunc: func(ctx context.Context, id string) (*types.User, error) {
+					if user, ok := usersTestAccount.Users[id]; ok {
+						return user, nil
+					}
+					return nil, status.Errorf(status.NotFound, "user %s not found", id)
+				},
+				GetUsersFromAccountFunc: func(_ context.Context, accountID, userID string) (map[string]*types.UserInfo, error) {
+					return map[string]*types.UserInfo{
+						regularUserID: {ID: regularUserID, Email: takenEmail, Role: "user"},
+					}, nil
+				},
+				SaveOrAddUserFunc: func(_ context.Context, accountID, userID string, user *types.User, addIfNotExists bool) (*types.UserInfo, error) {
+					savedUser = user
+					savedAddIfNotExists = addIfNotExists
+					return user.Copy().ToUserInfo(nil)
+				},
+			},
+		}
+	}
+
+	marshal := func(t *testing.T, req api.UserCreateRequest) io.Reader {
+		t.Helper()
+		body, err := json.Marshal(req)
+		require.NoError(t, err)
+		return bytes.NewBuffer(body)
+	}
+
+	strPtr := func(s string) *string { return &s }
+
+	tt := []struct {
+		name           string
+		request        api.UserCreateRequest
+		expectedStatus int
+	}{
+		{
+			name: "PreCreateRegularUser",
+			request: api.UserCreateRequest{
+				Id:         strPtr(preCreatedID),
+				Email:      strPtr("new.employee@example.com"),
+				Name:       strPtr("New Employee"),
+				Role:       "user",
+				AutoGroups: []string{"group_1"},
+			},
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "PreCreateDuplicateIDRejected",
+			request: api.UserCreateRequest{
+				Id:         strPtr(regularUserID),
+				Role:       "user",
+				AutoGroups: []string{},
+			},
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name: "PreCreateAdminRoleRejected",
+			request: api.UserCreateRequest{
+				Id:         strPtr(preCreatedID),
+				Role:       "admin",
+				AutoGroups: []string{},
+			},
+			expectedStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "PreCreateOwnerRoleRejected",
+			request: api.UserCreateRequest{
+				Id:         strPtr(preCreatedID),
+				Role:       "owner",
+				AutoGroups: []string{},
+			},
+			expectedStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "PreCreateDuplicateEmailRejected",
+			request: api.UserCreateRequest{
+				Id:         strPtr(preCreatedID),
+				Email:      strPtr("Taken@Example.com"),
+				Role:       "user",
+				AutoGroups: []string{},
+			},
+			expectedStatus: http.StatusConflict,
+		},
+		{
+			name: "PreCreateServiceUserRejected",
+			request: api.UserCreateRequest{
+				Id:            strPtr(preCreatedID),
+				IsServiceUser: true,
+				Role:          "user",
+				AutoGroups:    []string{},
+			},
+			expectedStatus: http.StatusUnprocessableEntity,
+		},
+		{
+			name: "PreCreateBlankIDRejected",
+			request: api.UserCreateRequest{
+				Id:         strPtr("   "),
+				Role:       "user",
+				AutoGroups: []string{},
+			},
+			expectedStatus: http.StatusUnprocessableEntity,
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			userHandler := newPreCreateTestHandler()
+			req := httptest.NewRequest(http.MethodPost, "/api/users", marshal(t, tc.request))
+			rr := httptest.NewRecorder()
+			req = nbcontext.SetUserAuthInRequest(req, auth.UserAuth{
+				UserId:    existingUserID,
+				Domain:    testDomain,
+				AccountId: existingAccountID,
+			})
+
+			userHandler.createUser(rr, req)
+
+			res := rr.Result()
+			defer res.Body.Close()
+
+			require.Equal(t, tc.expectedStatus, rr.Code)
+
+			if tc.expectedStatus != http.StatusOK {
+				assert.Nil(t, savedUser, "user must not be saved on rejected pre-create")
+				return
+			}
+
+			require.NotNil(t, savedUser)
+			assert.True(t, savedAddIfNotExists)
+			assert.Equal(t, preCreatedID, savedUser.Id)
+			assert.Equal(t, types.UserRoleUser, savedUser.Role)
+			assert.Equal(t, []string{"group_1"}, savedUser.AutoGroups)
+			assert.Equal(t, "new.employee@example.com", savedUser.Email)
+			assert.Equal(t, "New Employee", savedUser.Name)
+			assert.Equal(t, types.UserIssuedAPI, savedUser.Issued)
+			assert.False(t, savedUser.Blocked)
+			assert.False(t, savedUser.PendingApproval)
+			assert.False(t, savedUser.CreatedAt.IsZero())
+
+			var respUser api.User
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&respUser))
+			assert.Equal(t, preCreatedID, respUser.Id)
+		})
+	}
+}
+
 func TestInviteUser(t *testing.T) {
 	tt := []struct {
 		name           string

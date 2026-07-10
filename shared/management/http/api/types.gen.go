@@ -5499,6 +5499,9 @@ type UserCreateRequest struct {
 	// Email User's Email to send invite to
 	Email *string `json:"email,omitempty"`
 
+	// Id Optional explicit user ID for pre-provisioning. When set, the user is created directly (no IdP invite) so that a future login whose JWT sub equals this ID adopts the pre-created user as-is. Only allowed with role "user" and is_service_user false.
+	Id *string `json:"id,omitempty"`
+
 	// IsServiceUser Is true if this user is a service user
 	IsServiceUser bool `json:"is_service_user"`
 

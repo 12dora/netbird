@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	log "github.com/sirupsen/logrus"
@@ -135,7 +137,8 @@ func (h *handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	util.WriteJSONObject(r.Context(), w, util.EmptyObject{})
 }
 
-// createUser creates a User in the system with a status "invited" (effectively this is a user invite).
+// createUser creates a User in the system with a status "invited" (effectively this is a user invite),
+// unless an explicit id is provided, in which case the user is pre-created directly (see preCreateUser).
 func (h *handler) createUser(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		util.WriteErrorResponse("wrong HTTP method", http.StatusMethodNotAllowed, w)
@@ -158,6 +161,11 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request) {
 
 	if types.StrRoleToUserRole(req.Role) == types.UserRoleUnknown {
 		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "unknown user role %s", req.Role), w)
+		return
+	}
+
+	if req.Id != nil {
+		h.preCreateUser(w, r, accountID, userID, req)
 		return
 	}
 
@@ -184,6 +192,93 @@ func (h *handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.WriteJSONObject(r.Context(), w, toUserResponse(newUser, userID))
+}
+
+// maxPreCreateUserIDLength bounds the explicit user ID accepted by preCreateUser; IdP subjects
+// (UUIDs, hashed identifiers) are far shorter in practice.
+const maxPreCreateUserIDLength = 256
+
+// preCreateUser creates a regular user with an explicit ID ahead of their first IdP login.
+// The JIT login path adopts an already existing user with the same ID as-is, so an external
+// provisioning system can bind auto-groups (and implicitly approval) before the user ever logs in.
+// Pre-created users are intentionally not subject to UserApprovalRequired: creation through this
+// endpoint is the approval.
+func (h *handler) preCreateUser(w http.ResponseWriter, r *http.Request, accountID, initiatorID string, req *api.PostApiUsersJSONRequestBody) {
+	if req.IsServiceUser {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "id can't be set for service users"), w)
+		return
+	}
+
+	targetUserID := strings.TrimSpace(*req.Id)
+	if targetUserID == "" || len(targetUserID) > maxPreCreateUserIDLength {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "invalid user id"), w)
+		return
+	}
+
+	// role=owner would trigger an ownership transfer and admins must not be minted by a
+	// provisioning channel, so only regular users can be pre-created.
+	if types.StrRoleToUserRole(req.Role) != types.UserRoleUser {
+		util.WriteError(r.Context(), status.Errorf(status.InvalidArgument, "pre-created users must have role user"), w)
+		return
+	}
+
+	existingUser, err := h.accountManager.GetUserByID(r.Context(), targetUserID)
+	if err != nil {
+		if s, ok := status.FromError(err); !ok || s.Type() != status.NotFound {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+	}
+	if existingUser != nil {
+		util.WriteError(r.Context(), status.Errorf(status.UserAlreadyExists, "user with ID %s already exists", targetUserID), w)
+		return
+	}
+
+	email := ""
+	if req.Email != nil {
+		email = strings.TrimSpace(*req.Email)
+	}
+	name := ""
+	if req.Name != nil {
+		name = *req.Name
+	}
+
+	// the SaveOrAddUser create path doesn't check email uniqueness (the invite path does), so
+	// check here to avoid confusing duplicates in the dashboard.
+	if email != "" {
+		accountUsers, err := h.accountManager.GetUsersFromAccount(r.Context(), accountID, initiatorID)
+		if err != nil {
+			util.WriteError(r.Context(), err, w)
+			return
+		}
+		for _, u := range accountUsers {
+			if u.Email != "" && strings.EqualFold(u.Email, email) {
+				util.WriteError(r.Context(), status.Errorf(status.UserAlreadyExists, "user with email %s already exists", email), w)
+				return
+			}
+		}
+	}
+
+	autoGroups := req.AutoGroups
+	if autoGroups == nil {
+		autoGroups = []string{}
+	}
+
+	newUser, err := h.accountManager.SaveOrAddUser(r.Context(), accountID, initiatorID, &types.User{
+		Id:         targetUserID,
+		Role:       types.UserRoleUser,
+		AutoGroups: autoGroups,
+		Email:      email,
+		Name:       name,
+		Issued:     types.UserIssuedAPI,
+		CreatedAt:  time.Now().UTC(),
+	}, true)
+	if err != nil {
+		util.WriteError(r.Context(), err, w)
+		return
+	}
+
+	util.WriteJSONObject(r.Context(), w, toUserResponse(newUser, initiatorID))
 }
 
 // getAllUsers returns a list of users of the account this user belongs to.

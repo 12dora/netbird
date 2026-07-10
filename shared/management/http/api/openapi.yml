@@ -565,6 +565,10 @@ components:
     UserCreateRequest:
       type: object
       properties:
+        id:
+          description: Optional explicit user ID for pre-provisioning. When set, the user is created directly (no IdP invite) so that a future login whose JWT sub equals this ID adopts the pre-created user as-is. Only allowed with role "user" and is_service_user false.
+          type: string
+          example: 8a4b3c2d-1e5f-4a6b-9c7d-0e1f2a3b4c5d
         email:
           description: User's Email to send invite to
           type: string
