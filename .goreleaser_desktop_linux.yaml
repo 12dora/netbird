@@ -1,0 +1,42 @@
+version: 2
+
+project_name: netbird
+
+builds:
+  - id: netbird
+    dir: client
+    binary: netbird
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/netbirdio/netbird/version.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .CommitDate }} -X main.builtBy=github-actions
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+nfpms:
+  - id: netbird_deb
+    maintainer: NetBird <dev@netbird.io>
+    description: NetBird client.
+    homepage: https://netbird.io/
+    license: BSD-3-Clause
+    bindir: /usr/bin
+    builds:
+      - netbird
+    formats:
+      - deb
+    scripts:
+      postinstall: release_files/post_install.sh
+      preremove: release_files/pre_remove.sh
+
+checksum:
+  disable: true
+
+changelog:
+  disable: true
+
+release:
+  disable: true

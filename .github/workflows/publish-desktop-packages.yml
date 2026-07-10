@@ -1,0 +1,343 @@
+name: Publish desktop packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish (for example, v0.74.3-zh.1)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-desktop-packages-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  GORELEASER_VER: v2.16.0
+
+jobs:
+  prepare:
+    name: Resolve release version
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      package_version: ${{ steps.version.outputs.package_version }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate version tag
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag || github.ref_name }}'
+          git rev-parse --verify "refs/tags/${tag}" >/dev/null
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]] || {
+            echo "Expected a semver tag beginning with v, got: $tag" >&2
+            exit 1
+          }
+          version="${tag#v}"
+          package_version="${version%%-*}"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "package_version=$package_version"
+          } >> "$GITHUB_OUTPUT"
+
+  build_linux_deb:
+    name: Build Linux deb packages
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build deb package
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          version: ${{ env.GORELEASER_VER }}
+          args: release --clean --config .goreleaser_desktop_linux.yaml
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Select requested architecture packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          for arch in amd64 arm64; do
+            mapfile -t packages < <(find dist -type f -name "*_${arch}.deb" | sort)
+            [[ ${#packages[@]} -eq 1 ]] || {
+              printf 'Expected one %s deb, found:\n%s\n' "$arch" "${packages[*]:-none}" >&2
+              exit 1
+            }
+            cp "${packages[0]}" "out/netbird_${{ needs.prepare.outputs.version }}_linux_${arch}.deb"
+          done
+
+      - name: Upload Linux deb packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-linux
+          path: out/*.deb
+          if-no-files-found: error
+
+  build_windows_binaries:
+    name: Build Windows amd64 binaries
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Windows cross-compiler
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends gcc-mingw-w64-x86-64
+
+      - name: Generate Windows version resources
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@233067e
+          IFS=. read -r major minor patch <<< '${{ needs.prepare.outputs.package_version }}'
+          common_args=(
+            -64
+            -icon client/ui/assets/netbird.ico
+            -ver-major "$major"
+            -ver-minor "$minor"
+            -ver-patch "$patch"
+            -ver-build 0
+            -file-version "${major}.${minor}.${patch}.0"
+            -product-version "${major}.${minor}.${patch}.0"
+          )
+          goversioninfo "${common_args[@]}" \
+            -manifest client/manifest.xml \
+            -product-name NetBird \
+            -copyright 'NetBird GmbH' \
+            -o client/resources_windows_amd64.syso
+          goversioninfo "${common_args[@]}" \
+            -manifest client/ui/manifest.xml \
+            -product-name 'NetBird UI' \
+            -copyright 'NetBird GmbH' \
+            -o client/ui/resources_windows_amd64.syso
+
+      - name: Build daemon and UI
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/netbird_windows_amd64
+          build_date="$(git log -1 --format=%cI)"
+          ldflags="-s -w -X github.com/netbirdio/netbird/version.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA} -X main.date=${build_date} -X main.builtBy=github-actions"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -tags load_wgnt_from_rsrc -trimpath -ldflags "$ldflags" \
+            -o dist/netbird_windows_amd64/netbird.exe ./client
+          CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+            go build -trimpath -ldflags "$ldflags -H windowsgui" \
+            -o dist/netbird_windows_amd64/netbird-ui.exe ./client/ui
+
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-amd64-binaries
+          path: dist/netbird_windows_amd64/
+          if-no-files-found: error
+
+  package_windows_exe:
+    name: Package Windows amd64 exe
+    needs: [prepare, build_windows_binaries]
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      DOWNLOAD_PATH: ${{ github.workspace }}\temp
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Download Windows binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: windows-amd64-binaries
+          path: dist\netbird_windows_amd64
+
+      - name: Add 7-Zip to PATH
+        run: echo 'C:\Program Files\7-Zip' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Download and stage Wintun
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:DOWNLOAD_PATH | Out-Null
+          $archive = Join-Path $env:DOWNLOAD_PATH 'wintun.zip'
+          Invoke-WebRequest -Uri 'https://pkgs.netbird.io/wintun/wintun-0.14.1.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51') {
+            throw 'Wintun checksum mismatch'
+          }
+          tar -xf $archive -C $env:DOWNLOAD_PATH
+          Move-Item (Join-Path $env:DOWNLOAD_PATH 'wintun\bin\amd64\wintun.dll') 'dist\netbird_windows_amd64\'
+
+      - name: Download and stage Mesa3D
+        run: |
+          $archive = Join-Path $env:DOWNLOAD_PATH 'mesa3d.7z'
+          Invoke-WebRequest -Uri 'https://pkgs.netbird.io/mesa3d/MesaForWindows-x64-20.1.8.7z' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne '71c7cb64ec229a1d6b8d62fa08e1889ed2bd17c0eeede8689daf0f25cb31d6b9') {
+            throw 'Mesa3D checksum mismatch'
+          }
+          & 7z x "-o$env:DOWNLOAD_PATH" $archive
+          if ($LASTEXITCODE -ne 0) { throw 'failed to extract Mesa3D' }
+          Move-Item (Join-Path $env:DOWNLOAD_PATH 'opengl32.dll') 'dist\netbird_windows_amd64\'
+
+      - name: Install NSIS plugins
+        run: |
+          $enVar = 'envar_plugin.zip'
+          Invoke-WebRequest -Uri 'https://pkgs.netbird.io/nsis/EnVar_plugin.zip' -OutFile $enVar
+          if ((Get-FileHash $enVar -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'e9aa92de351345ed82795251d838f1ae9041ba35af9d381a5780c7843b01f56a') {
+            throw 'EnVar plugin checksum mismatch'
+          }
+          & 7z x -oNSIS_Plugins $enVar
+          if ($LASTEXITCODE -ne 0) { throw 'failed to extract EnVar plugin' }
+          $shellExec = 'ShellExecAsUser_amd64-Unicode.7z'
+          Invoke-WebRequest -Uri 'https://pkgs.netbird.io/nsis/ShellExecAsUser_amd64-Unicode.7z' -OutFile $shellExec
+          if ((Get-FileHash $shellExec -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0a55ea25c7330a92cec028eda8afcaf1b1a7092e0dfb77c21c8f654564b4ff9d') {
+            throw 'ShellExecAsUser plugin checksum mismatch'
+          }
+          & 7z x -oNSIS_Plugins $shellExec
+          if ($LASTEXITCODE -ne 0) { throw 'failed to extract ShellExecAsUser plugin' }
+          $nsisPluginDir = 'C:\Program Files (x86)\NSIS\Plugins\x86-unicode'
+          Get-ChildItem -Path NSIS_Plugins\Plugins -Recurse -Filter *.dll |
+            Copy-Item -Destination $nsisPluginDir -Force
+
+      - name: Build NSIS installer
+        shell: pwsh
+        run: |
+          $parts = '${{ needs.prepare.outputs.package_version }}'.Split('.')
+          $env:APPVER = "$($parts[0]).$($parts[1]).$($parts[2]).${{ github.run_number }}"
+          & 'C:\Program Files (x86)\NSIS\makensis.exe' /V4 '/DARCH=amd64' client\installer.nsis
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Move-Item netbird-installer.exe "out\netbird_${{ needs.prepare.outputs.version }}_windows_amd64.exe"
+
+      - name: Upload Windows exe
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-windows-amd64
+          path: out/*.exe
+          if-no-files-found: error
+
+  build_macos_pkg:
+    name: Build macOS arm64 pkg
+    needs: prepare
+    runs-on: macos-14
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build arm64 app bundle and pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(uname -m)" == "arm64" ]] || {
+            echo 'macos-14 must provide an arm64 runner' >&2
+            exit 1
+          }
+          build_date="$(git log -1 --format=%cI)"
+          ldflags="-s -w -X github.com/netbirdio/netbird/version.version=${{ needs.prepare.outputs.version }} -X main.commit=${GITHUB_SHA} -X main.date=${build_date} -X main.builtBy=github-actions"
+          app='build/NetBird.app'
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -ldflags "$ldflags" -o "$app/Contents/MacOS/netbird" ./client
+          CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
+            go build -trimpath -ldflags "$ldflags" -o "$app/Contents/MacOS/netbird-ui" ./client/ui
+          cp client/ui/Netbird.icns "$app/Contents/Resources/NetBird.icns"
+          cp release_files/darwin_pkg/Info.plist "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${{ needs.prepare.outputs.version }}" "$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$app/Contents/Info.plist"
+          codesign --force --deep --sign - "$app"
+          mkdir -p package-root/Applications out
+          cp -R "$app" package-root/Applications/NetBird.app
+          pkgbuild \
+            --root package-root \
+            --scripts release_files/darwin_pkg \
+            --identifier io.netbird.client \
+            --version '${{ needs.prepare.outputs.package_version }}' \
+            --install-location / \
+            "out/netbird_${{ needs.prepare.outputs.version }}_darwin_arm64.pkg"
+
+      - name: Upload macOS pkg
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-macos-arm64
+          path: out/*.pkg
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build_linux_deb, package_windows_exe, build_macos_pkg]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: release
+
+      - name: Create or update GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find release -maxdepth 1 -type f \( -name '*.deb' -o -name '*.exe' -o -name '*.pkg' \) | sort)
+          [[ ${#assets[@]} -eq 4 ]] || {
+            printf 'Expected exactly four requested assets, found:\n%s\n' "${assets[*]:-none}" >&2
+            exit 1
+          }
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --clobber
+            exit 0
+          fi
+          args=(--title "NetBird $TAG" --generate-notes)
+          [[ "$TAG" == *-* ]] && args+=(--prerelease)
+          gh release create "$TAG" "${assets[@]}" "${args[@]}"
