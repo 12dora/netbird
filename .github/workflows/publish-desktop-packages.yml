@@ -338,6 +338,6 @@ jobs:
             gh release upload "$TAG" "${assets[@]}" --clobber
             exit 0
           fi
-          args=(--title "NetBird $TAG" --generate-notes)
+          args=(--title "NetBird $TAG" --notes "Automated desktop package release for $TAG.")
           [[ "$TAG" == *-* ]] && args+=(--prerelease)
           gh release create "$TAG" "${assets[@]}" "${args[@]}"
