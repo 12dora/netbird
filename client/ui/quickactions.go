@@ -7,7 +7,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"fmt"
 	"runtime"
 	"sync/atomic"
 	"time"
