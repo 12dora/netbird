@@ -18,10 +18,10 @@ import (
 
 func (s *serviceClient) showUpdateProgress(ctx context.Context, version string) {
 	log.Infof("show installer progress window: %s", version)
-	s.wUpdateProgress = s.app.NewWindow("Automatically updating client")
+	s.wUpdateProgress = s.app.NewWindow(tr("Automatically updating client"))
 
-	statusLabel := widget.NewLabel("Updating...")
-	infoLabel := widget.NewLabel(fmt.Sprintf("Your client version is older than the auto-update version set in Management.\nUpdating client to: %s.", version))
+	statusLabel := widget.NewLabel(tr("Updating..."))
+	infoLabel := widget.NewLabel(trf("Your client version is older than the auto-update version set in Management.\nUpdating client to: %s.", version))
 	content := container.NewVBox(infoLabel, statusLabel)
 	s.wUpdateProgress.SetContent(content)
 	s.wUpdateProgress.CenterOnScreen()
@@ -103,13 +103,13 @@ func (s *serviceClient) showInstallerResult(statusLabel *widget.Label, err error
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		log.Warn("update watcher timed out")
-		statusLabel.SetText("Update timed out. Please try again.")
+		statusLabel.SetText(tr("Update timed out. Please try again."))
 	case errors.Is(err, context.Canceled):
 		log.Info("update watcher canceled")
-		statusLabel.SetText("Update canceled.")
+		statusLabel.SetText(tr("Update canceled."))
 	case err != nil:
 		log.Errorf("update failed: %v", err)
-		statusLabel.SetText("Update failed: " + err.Error())
+		statusLabel.SetText(trf("Update failed: %s", err.Error()))
 	default:
 		s.wUpdateProgress.Close()
 	}
@@ -120,7 +120,7 @@ func dotUpdater() func() string {
 	dotCount := 0
 	return func() string {
 		dotCount = (dotCount + 1) % 4
-		return fmt.Sprintf("%s%s", "Updating", strings.Repeat(".", dotCount))
+		return fmt.Sprintf("%s%s", tr("Updating"), strings.Repeat(".", dotCount))
 	}
 }
 

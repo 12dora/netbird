@@ -117,7 +117,7 @@ func (e *Manager) handleEvent(event *proto.SystemEvent) {
 		body := event.UserMessage
 		id := event.Metadata["id"]
 		if id != "" {
-			body += fmt.Sprintf(" ID: %s", id)
+			body += fmt.Sprintf(localize(" ID: %s"), id)
 		}
 		e.notifier.Send(title, body)
 	}
@@ -168,7 +168,7 @@ func (e *Manager) getEventTitle(event *proto.SystemEvent) string {
 		category = "System"
 	}
 
-	return fmt.Sprintf("%s: %s", prefix, category)
+	return fmt.Sprintf("%s: %s", localize(prefix), localize(category))
 }
 
 func getClient(addr string) (proto.DaemonServiceClient, error) {

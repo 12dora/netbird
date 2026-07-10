@@ -45,9 +45,9 @@ func (s *serviceClient) showProfilesUI() {
 				widget.NewLabel(""), // indicator
 				widget.NewLabel(""), // profile name
 				layout.NewSpacer(),
-				widget.NewButton("Select", nil),
-				widget.NewButton("Deregister", nil),
-				widget.NewButton("Remove", nil),
+				widget.NewButton(tr("Select"), nil),
+				widget.NewButton(tr("Deregister"), nil),
+				widget.NewButton(tr("Remove"), nil),
 			)
 		},
 		func(i widget.ListItemID, item fyne.CanvasObject) {
@@ -71,9 +71,9 @@ func (s *serviceClient) showProfilesUI() {
 			// Configure Select/Active button
 			selectBtn.SetText(func() string {
 				if profile.IsActive {
-					return "Active"
+					return tr("Active")
 				}
-				return "Select"
+				return tr("Select")
 			}())
 			selectBtn.OnTapped = func() {
 				if profile.IsActive {
@@ -81,8 +81,8 @@ func (s *serviceClient) showProfilesUI() {
 				}
 				// confirm switch
 				dialog.ShowConfirm(
-					"Switch Profile",
-					fmt.Sprintf("Are you sure you want to switch to '%s'?", profile.Name),
+					tr("Switch Profile"),
+					trf("Are you sure you want to switch to '%s'?", profile.Name),
 					func(confirm bool) {
 						if !confirm {
 							return
@@ -91,13 +91,13 @@ func (s *serviceClient) showProfilesUI() {
 						err = s.switchProfile(profile.ID)
 						if err != nil {
 							log.Errorf("failed to switch profile: %v", err)
-							dialog.ShowError(errors.New("failed to select profile"), s.wProfiles)
+							dialog.ShowError(errors.New(tr("failed to select profile")), s.wProfiles)
 							return
 						}
 
 						dialog.ShowInformation(
-							"Profile Switched",
-							fmt.Sprintf("Profile '%s' switched successfully", profile.Name),
+							tr("Profile Switched"),
+							trf("Profile '%s' switched successfully", profile.Name),
 							s.wProfiles,
 						)
 
@@ -116,7 +116,7 @@ func (s *serviceClient) showProfilesUI() {
 						if status.Status == string(internal.StatusConnected) {
 							if err := s.menuDownClick(); err != nil {
 								log.Errorf("failed to handle down click after switching profile: %v", err)
-								dialog.ShowError(fmt.Errorf("failed to handle down click"), s.wProfiles)
+								dialog.ShowError(errors.New(tr("failed to handle down click")), s.wProfiles)
 								return
 							}
 						}
@@ -128,17 +128,17 @@ func (s *serviceClient) showProfilesUI() {
 			}
 
 			logoutBtn.Show()
-			logoutBtn.SetText("Deregister")
+			logoutBtn.SetText(tr("Deregister"))
 			logoutBtn.OnTapped = func() {
 				s.handleProfileLogout(profile, refresh)
 			}
 
 			// Remove profile
-			removeBtn.SetText("Remove")
+			removeBtn.SetText(tr("Remove"))
 			removeBtn.OnTapped = func() {
 				dialog.ShowConfirm(
-					"Delete Profile",
-					fmt.Sprintf("Are you sure you want to delete '%s'?", profile.Name),
+					tr("Delete Profile"),
+					trf("Are you sure you want to delete '%s'?", profile.Name),
 					func(confirm bool) {
 						if !confirm {
 							return
@@ -147,12 +147,12 @@ func (s *serviceClient) showProfilesUI() {
 						err = s.removeProfile(profile.ID)
 						if err != nil {
 							log.Errorf("failed to remove profile: %v", err)
-							dialog.ShowError(fmt.Errorf("failed to remove profile"), s.wProfiles)
+							dialog.ShowError(errors.New(tr("failed to remove profile")), s.wProfiles)
 							return
 						}
 						dialog.ShowInformation(
-							"Profile Removed",
-							fmt.Sprintf("Profile '%s' removed successfully", profile.Name),
+							tr("Profile Removed"),
+							trf("Profile '%s' removed successfully", profile.Name),
 							s.wProfiles,
 						)
 						// update slice
@@ -175,15 +175,15 @@ func (s *serviceClient) showProfilesUI() {
 	}
 
 	// Button to add a new profile
-	newBtn := widget.NewButton("New Profile", func() {
+	newBtn := widget.NewButton(tr("New Profile"), func() {
 		nameEntry := widget.NewEntry()
-		nameEntry.SetPlaceHolder("Enter Profile Name")
+		nameEntry.SetPlaceHolder(tr("Enter Profile Name"))
 
-		formItems := []*widget.FormItem{{Text: "Name:", Widget: nameEntry}}
+		formItems := []*widget.FormItem{{Text: tr("Name:"), Widget: nameEntry}}
 		dlg := dialog.NewForm(
-			"New Profile",
-			"Create",
-			"Cancel",
+			tr("New Profile"),
+			tr("Create"),
+			tr("Cancel"),
 			formItems,
 			func(confirm bool) {
 				if !confirm {
@@ -191,7 +191,7 @@ func (s *serviceClient) showProfilesUI() {
 				}
 				name := nameEntry.Text
 				if name == "" {
-					dialog.ShowError(errors.New("profile name cannot be empty"), s.wProfiles)
+					dialog.ShowError(errors.New(tr("profile name cannot be empty")), s.wProfiles)
 					return
 				}
 
@@ -199,12 +199,12 @@ func (s *serviceClient) showProfilesUI() {
 				err = s.addProfile(name)
 				if err != nil {
 					log.Errorf("failed to create profile: %v", err)
-					dialog.ShowError(fmt.Errorf("failed to create profile"), s.wProfiles)
+					dialog.ShowError(errors.New(tr("failed to create profile")), s.wProfiles)
 					return
 				}
 				dialog.ShowInformation(
-					"Profile Created",
-					fmt.Sprintf("Profile '%s' created successfully", name),
+					tr("Profile Created"),
+					trf("Profile '%s' created successfully", name),
 					s.wProfiles,
 				)
 				// update slice
@@ -219,7 +219,7 @@ func (s *serviceClient) showProfilesUI() {
 
 	// Assemble window content
 	content := container.NewBorder(nil, newBtn, nil, nil, list)
-	s.wProfiles = s.app.NewWindow("NetBird Profiles")
+	s.wProfiles = s.app.NewWindow(tr("NetBird Profiles"))
 	s.wProfiles.SetContent(content)
 	s.wProfiles.Resize(fyne.NewSize(400, 300))
 	s.wProfiles.SetOnClosed(s.cancel)
@@ -352,8 +352,8 @@ func (s *serviceClient) getProfiles() ([]Profile, error) {
 
 func (s *serviceClient) handleProfileLogout(profile Profile, refreshCallback func()) {
 	dialog.ShowConfirm(
-		"Deregister",
-		fmt.Sprintf("Are you sure you want to deregister from '%s'?", profile.Name),
+		tr("Deregister"),
+		trf("Are you sure you want to deregister from '%s'?", profile.Name),
 		func(confirm bool) {
 			if !confirm {
 				return
@@ -362,14 +362,14 @@ func (s *serviceClient) handleProfileLogout(profile Profile, refreshCallback fun
 			conn, err := s.getSrvClient(defaultFailTimeout)
 			if err != nil {
 				log.Errorf("failed to get service client: %v", err)
-				dialog.ShowError(fmt.Errorf("failed to connect to service"), s.wProfiles)
+				dialog.ShowError(errors.New(tr("failed to connect to service")), s.wProfiles)
 				return
 			}
 
 			currUser, err := user.Current()
 			if err != nil {
 				log.Errorf("failed to get current user: %v", err)
-				dialog.ShowError(fmt.Errorf("failed to get current user"), s.wProfiles)
+				dialog.ShowError(errors.New(tr("failed to get current user")), s.wProfiles)
 				return
 			}
 
@@ -382,13 +382,13 @@ func (s *serviceClient) handleProfileLogout(profile Profile, refreshCallback fun
 			})
 			if err != nil {
 				log.Errorf("logout failed: %v", err)
-				dialog.ShowError(fmt.Errorf("deregister failed"), s.wProfiles)
+				dialog.ShowError(errors.New(tr("deregister failed")), s.wProfiles)
 				return
 			}
 
 			dialog.ShowInformation(
-				"Deregistered",
-				fmt.Sprintf("Successfully deregistered from '%s'", profile.Name),
+				tr("Deregistered"),
+				trf("Successfully deregistered from '%s'", profile.Name),
 				s.wProfiles,
 			)
 
@@ -569,7 +569,7 @@ func (p *profileMenu) refresh() {
 					if err != nil {
 						log.Errorf("failed to switch profile: %v", err)
 						// show  notification dialog
-						p.serviceClient.notifier.Send("Error", "Failed to switch profile")
+						p.serviceClient.notifier.Send(tr("Error"), tr("Failed to switch profile"))
 						return
 					}
 
@@ -614,7 +614,7 @@ func (p *profileMenu) refresh() {
 
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	manageItem := p.profileMenuItem.AddSubMenuItem("Manage Profiles", "")
+	manageItem := p.profileMenuItem.AddSubMenuItem(tr("Manage Profiles"), "")
 	p.manageProfilesSubItem = &subItem{manageItem, ctx, cancel}
 
 	go func() {
@@ -635,7 +635,7 @@ func (p *profileMenu) refresh() {
 
 	// Add Logout menu item
 	ctx2, cancel2 := context.WithCancel(context.Background())
-	logoutItem := p.profileMenuItem.AddSubMenuItem("Deregister", "")
+	logoutItem := p.profileMenuItem.AddSubMenuItem(tr("Deregister"), "")
 	p.logoutSubItem = &subItem{logoutItem, ctx2, cancel2}
 
 	go func() {
@@ -649,9 +649,9 @@ func (p *profileMenu) refresh() {
 				}
 				if err := p.eventHandler.logout(p.ctx); err != nil {
 					log.Errorf("logout failed: %v", err)
-					p.serviceClient.notifier.Send("Error", "Failed to deregister")
+					p.serviceClient.notifier.Send(tr("Error"), tr("Failed to deregister"))
 				} else {
-					p.serviceClient.notifier.Send("Success", "Deregistered successfully")
+					p.serviceClient.notifier.Send(tr("Success"), tr("Deregistered successfully"))
 				}
 			}
 		}
@@ -660,7 +660,7 @@ func (p *profileMenu) refresh() {
 	if activeProf.ProfileName == "default" || activeProf.Username == currUser.Username {
 		p.profileMenuItem.SetTitle(activeProf.ProfileName)
 	} else {
-		p.profileMenuItem.SetTitle(fmt.Sprintf("Profile: %s (User: %s)", activeProf.ProfileName, activeProf.Username))
+		p.profileMenuItem.SetTitle(trf("Profile: %s (User: %s)", activeProf.ProfileName, activeProf.Username))
 		p.emailMenuItem.Hide()
 	}
 
@@ -706,7 +706,7 @@ func (p *profileMenu) setEnabled(enabled bool) {
 		p.profileMenuItem.SetTooltip("")
 	} else {
 		p.profileMenuItem.Disable()
-		p.profileMenuItem.SetTooltip("Profiles are disabled by daemon")
+		p.profileMenuItem.SetTooltip(tr("Profiles are disabled by daemon"))
 	}
 
 	apply := func(item *systray.MenuItem) {

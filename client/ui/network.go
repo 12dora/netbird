@@ -34,7 +34,7 @@ const (
 type filter string
 
 func (s *serviceClient) showNetworksUI() {
-	s.wNetworks = s.app.NewWindow("Networks")
+	s.wNetworks = s.app.NewWindow(tr("Networks"))
 	s.wNetworks.SetOnClosed(s.cancel)
 
 	allGrid := container.New(layout.NewGridLayout(3))
@@ -43,9 +43,9 @@ func (s *serviceClient) showNetworksUI() {
 	exitNodeGrid := container.New(layout.NewGridLayout(3))
 	routeCheckContainer := container.NewVBox()
 	tabs := container.NewAppTabs(
-		container.NewTabItem(allNetworksText, allGrid),
-		container.NewTabItem(overlappingNetworksText, overlappingGrid),
-		container.NewTabItem(exitNodeNetworksText, exitNodeGrid),
+		container.NewTabItem(tr(allNetworksText), allGrid),
+		container.NewTabItem(tr(overlappingNetworksText), overlappingGrid),
+		container.NewTabItem(tr(exitNodeNetworksText), exitNodeGrid),
 	)
 	tabs.OnSelected = func(item *container.TabItem) {
 		s.updateNetworksBasedOnDisplayTab(tabs, allGrid, overlappingGrid, exitNodeGrid)
@@ -61,15 +61,15 @@ func (s *serviceClient) showNetworksUI() {
 
 	buttonBox := container.NewHBox(
 		layout.NewSpacer(),
-		widget.NewButton("Refresh", func() {
+		widget.NewButton(tr("Refresh"), func() {
 			s.updateNetworksBasedOnDisplayTab(tabs, allGrid, overlappingGrid, exitNodeGrid)
 		}),
-		widget.NewButton("Select all", func() {
+		widget.NewButton(tr("Select all"), func() {
 			_, f := getGridAndFilterFromTab(tabs, allGrid, overlappingGrid, exitNodeGrid)
 			s.selectAllFilteredNetworks(f)
 			s.updateNetworksBasedOnDisplayTab(tabs, allGrid, overlappingGrid, exitNodeGrid)
 		}),
-		widget.NewButton("Deselect All", func() {
+		widget.NewButton(tr("Deselect All"), func() {
 			_, f := getGridAndFilterFromTab(tabs, allGrid, overlappingGrid, exitNodeGrid)
 			s.deselectAllFilteredNetworks(f)
 			s.updateNetworksBasedOnDisplayTab(tabs, allGrid, overlappingGrid, exitNodeGrid)
@@ -88,9 +88,9 @@ func (s *serviceClient) showNetworksUI() {
 func (s *serviceClient) updateNetworks(grid *fyne.Container, f filter) {
 	grid.Objects = nil
 	grid.Refresh()
-	idHeader := widget.NewLabelWithStyle("      ID", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	networkHeader := widget.NewLabelWithStyle("Range/Domains", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	resolvedIPsHeader := widget.NewLabelWithStyle("Resolved IPs", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	idHeader := widget.NewLabelWithStyle(tr("      ID"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	networkHeader := widget.NewLabelWithStyle(tr("Range/Domains"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
+	resolvedIPsHeader := widget.NewLabelWithStyle(tr("Resolved IPs"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
 	grid.Add(idHeader)
 	grid.Add(networkHeader)
@@ -157,7 +157,7 @@ func (s *serviceClient) getFilteredNetworks(f filter) ([]*proto.Network, error) 
 	routes, err := s.fetchNetworks()
 	if err != nil {
 		log.Errorf(getClientFMT, err)
-		s.showError(fmt.Errorf(getClientFMT, err))
+		s.showError(fmt.Errorf(tr(getClientFMT), err))
 		return nil, err
 	}
 	switch f {
@@ -238,7 +238,7 @@ func (s *serviceClient) selectNetwork(id string, checked bool) {
 	conn, err := s.getSrvClient(defaultFailTimeout)
 	if err != nil {
 		log.Errorf(getClientFMT, err)
-		s.showError(fmt.Errorf(getClientFMT, err))
+		s.showError(fmt.Errorf(tr(getClientFMT), err))
 		return
 	}
 
@@ -250,14 +250,14 @@ func (s *serviceClient) selectNetwork(id string, checked bool) {
 	if checked {
 		if _, err := conn.SelectNetworks(s.ctx, req); err != nil {
 			log.Errorf("failed to select network: %v", err)
-			s.showError(fmt.Errorf("failed to select network: %v", err))
+			s.showError(fmt.Errorf(tr("failed to select network: %v"), err))
 			return
 		}
 		log.Infof("Network '%s' selected", id)
 	} else {
 		if _, err := conn.DeselectNetworks(s.ctx, req); err != nil {
 			log.Errorf("failed to deselect network: %v", err)
-			s.showError(fmt.Errorf("failed to deselect network: %v", err))
+			s.showError(fmt.Errorf(tr("failed to deselect network: %v"), err))
 			return
 		}
 		log.Infof("Network '%s' deselected", id)
@@ -274,7 +274,7 @@ func (s *serviceClient) selectAllFilteredNetworks(f filter) {
 	req := s.getNetworksRequest(f, true)
 	if _, err := conn.SelectNetworks(s.ctx, req); err != nil {
 		log.Errorf("failed to select all networks: %v", err)
-		s.showError(fmt.Errorf("failed to select all networks: %v", err))
+		s.showError(fmt.Errorf(tr("failed to select all networks: %v"), err))
 		return
 	}
 
@@ -291,7 +291,7 @@ func (s *serviceClient) deselectAllFilteredNetworks(f filter) {
 	req := s.getNetworksRequest(f, false)
 	if _, err := conn.DeselectNetworks(s.ctx, req); err != nil {
 		log.Errorf("failed to deselect all networks: %v", err)
-		s.showError(fmt.Errorf("failed to deselect all networks: %v", err))
+		s.showError(fmt.Errorf(tr("failed to deselect all networks: %v"), err))
 		return
 	}
 
@@ -444,7 +444,7 @@ func (s *serviceClient) recreateExitNodeMenu(exitNodes []*proto.Network) {
 
 	if runtime.GOOS == "linux" || runtime.GOOS == "freebsd" {
 		s.mExitNode.Remove()
-		s.mExitNode = systray.AddMenuItem("Exit Node", disabledMenuDescr)
+		s.mExitNode = systray.AddMenuItem(tr("Exit Node"), disabledMenuDescr)
 	}
 
 	var showDeselectAll bool
@@ -456,7 +456,7 @@ func (s *serviceClient) recreateExitNodeMenu(exitNodes []*proto.Network) {
 
 		menuItem := s.mExitNode.AddSubMenuItemCheckbox(
 			node.ID,
-			fmt.Sprintf("Use exit node %s", node.ID),
+			trf("Use exit node %s", node.ID),
 			node.Selected,
 		)
 
@@ -479,7 +479,7 @@ func (s *serviceClient) addExitNodeDeselectAll() {
 	sep.Disable()
 	s.mExitNodeSeparator = sep
 
-	deselectAllItem := s.mExitNode.AddSubMenuItem("Deselect All", "Deselect All")
+	deselectAllItem := s.mExitNode.AddSubMenuItem(tr("Deselect All"), tr("Deselect All"))
 	s.mExitNodeDeselectAll = deselectAllItem
 
 	go func() {

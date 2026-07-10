@@ -84,7 +84,7 @@ func (h *eventHandler) handleConnectClick() {
 			if errors.Is(err, context.Canceled) || (ok && st.Code() == codes.Canceled) {
 				log.Debugf("connect operation cancelled by user")
 			} else {
-				h.client.notifier.Send("Error", "Failed to connect")
+				h.client.notifier.Send(tr("Error"), tr("Failed to connect"))
 				log.Errorf("connect failed: %v", err)
 			}
 		}
@@ -109,7 +109,7 @@ func (h *eventHandler) handleDisconnectClick() {
 		if err := h.client.menuDownClick(); err != nil {
 			st, ok := status.FromError(err)
 			if !errors.Is(err, context.Canceled) && !(ok && st.Code() == codes.Canceled) {
-				h.client.notifier.Send("Error", "Failed to disconnect")
+				h.client.notifier.Send(tr("Error"), tr("Failed to disconnect"))
 				log.Errorf("disconnect failed: %v", err)
 			} else {
 				log.Debugf("disconnect cancelled or already disconnecting")
@@ -127,7 +127,7 @@ func (h *eventHandler) handleAllowSSHClick() {
 	if err := h.updateConfigWithErr(); err != nil {
 		h.toggleCheckbox(h.client.mAllowSSH) // revert checkbox state on error
 		log.Errorf("failed to update config: %v", err)
-		h.client.notifier.Send("Error", "Failed to update SSH settings")
+		h.client.notifier.Send(tr("Error"), tr("Failed to update SSH settings"))
 	}
 
 }
@@ -137,7 +137,7 @@ func (h *eventHandler) handleAutoConnectClick() {
 	if err := h.updateConfigWithErr(); err != nil {
 		h.toggleCheckbox(h.client.mAutoConnect) // revert checkbox state on error
 		log.Errorf("failed to update config: %v", err)
-		h.client.notifier.Send("Error", "Failed to update auto-connect settings")
+		h.client.notifier.Send(tr("Error"), tr("Failed to update auto-connect settings"))
 	}
 }
 
@@ -146,7 +146,7 @@ func (h *eventHandler) handleRosenpassClick() {
 	if err := h.updateConfigWithErr(); err != nil {
 		h.toggleCheckbox(h.client.mEnableRosenpass) // revert checkbox state on error
 		log.Errorf("failed to update config: %v", err)
-		h.client.notifier.Send("Error", "Failed to update Rosenpass settings")
+		h.client.notifier.Send(tr("Error"), tr("Failed to update Rosenpass settings"))
 	}
 }
 
@@ -155,7 +155,7 @@ func (h *eventHandler) handleBlockInboundClick() {
 	if err := h.updateConfigWithErr(); err != nil {
 		h.toggleCheckbox(h.client.mBlockInbound) // revert checkbox state on error
 		log.Errorf("failed to update config: %v", err)
-		h.client.notifier.Send("Error", "Failed to update block inbound settings")
+		h.client.notifier.Send(tr("Error"), tr("Failed to update block inbound settings"))
 	}
 }
 
@@ -164,7 +164,7 @@ func (h *eventHandler) handleNotificationsClick() {
 	if err := h.updateConfigWithErr(); err != nil {
 		h.toggleCheckbox(h.client.mNotifications) // revert checkbox state on error
 		log.Errorf("failed to update config: %v", err)
-		h.client.notifier.Send("Error", "Failed to update notifications settings")
+		h.client.notifier.Send(tr("Error"), tr("Failed to update notifications settings"))
 	} else if h.client.eventManager != nil {
 		h.client.eventManager.SetNotificationsEnabled(h.client.mNotifications.Checked())
 	}

@@ -52,16 +52,16 @@ type progressUI struct {
 }
 
 func (s *serviceClient) showDebugUI() {
-	w := s.app.NewWindow("NetBird Debug")
+	w := s.app.NewWindow(tr("NetBird Debug"))
 	w.SetOnClosed(s.cancel)
 	w.Resize(fyne.NewSize(600, 500))
 	w.SetFixedSize(true)
 
-	anonymizeCheck := widget.NewCheck("Anonymize sensitive information (public IPs, domains, ...)", nil)
-	systemInfoCheck := widget.NewCheck("Include system information (routes, interfaces, ...)", nil)
+	anonymizeCheck := widget.NewCheck(tr("Anonymize sensitive information (public IPs, domains, ...)"), nil)
+	systemInfoCheck := widget.NewCheck(tr("Include system information (routes, interfaces, ...)"), nil)
 	systemInfoCheck.SetChecked(true)
-	captureCheck := widget.NewCheck("Include packet capture", nil)
-	uploadCheck := widget.NewCheck("Upload bundle automatically after creation", nil)
+	captureCheck := widget.NewCheck(tr("Include packet capture"), nil)
+	uploadCheck := widget.NewCheck(tr("Upload bundle automatically after creation"), nil)
 	uploadCheck.SetChecked(true)
 
 	uploadURLContainer, uploadURL := s.buildUploadSection(uploadCheck)
@@ -72,7 +72,7 @@ func (s *serviceClient) showDebugUI() {
 	statusLabel.Hide()
 	progressBar := widget.NewProgressBar()
 	progressBar.Hide()
-	createButton := widget.NewButton("Create Debug Bundle", nil)
+	createButton := widget.NewButton(tr("Create Debug Bundle"), nil)
 
 	uiControls := []fyne.Disableable{
 		anonymizeCheck, systemInfoCheck, captureCheck,
@@ -86,7 +86,7 @@ func (s *serviceClient) showDebugUI() {
 	)
 
 	content := container.NewVBox(
-		widget.NewLabel("Create a debug bundle to help troubleshoot issues with NetBird"),
+		widget.NewLabel(tr("Create a debug bundle to help troubleshoot issues with NetBird")),
 		widget.NewLabel(""),
 		anonymizeCheck, systemInfoCheck, captureCheck,
 		uploadCheck, uploadURLContainer,
@@ -103,9 +103,9 @@ func (s *serviceClient) showDebugUI() {
 func (s *serviceClient) buildUploadSection(uploadCheck *widget.Check) (*fyne.Container, *widget.Entry) {
 	uploadURL := widget.NewEntry()
 	uploadURL.SetText(uptypes.DefaultBundleURL)
-	uploadURL.SetPlaceHolder("Enter upload URL")
+	uploadURL.SetPlaceHolder(tr("Enter upload URL"))
 
-	uploadURLContainer := container.NewVBox(widget.NewLabel("Debug upload URL:"), uploadURL)
+	uploadURLContainer := container.NewVBox(widget.NewLabel(tr("Debug upload URL:")), uploadURL)
 
 	uploadCheck.OnChanged = func(checked bool) {
 		if checked {
@@ -118,18 +118,18 @@ func (s *serviceClient) buildUploadSection(uploadCheck *widget.Check) (*fyne.Con
 }
 
 func (s *serviceClient) buildDurationSection() (*fyne.Container, *widget.Check, *widget.Entry, *widget.Label) {
-	runForDurationCheck := widget.NewCheck("Run with trace logs before creating bundle", nil)
+	runForDurationCheck := widget.NewCheck(tr("Run with trace logs before creating bundle"), nil)
 	runForDurationCheck.SetChecked(true)
 
-	forLabel := widget.NewLabel("for")
+	forLabel := widget.NewLabel(tr("for"))
 	durationInput := widget.NewEntry()
 	durationInput.SetText("1")
-	minutesLabel := widget.NewLabel("minute")
+	minutesLabel := widget.NewLabel(tr("minute"))
 	durationInput.Validator = func(s string) error {
 		return validateMinute(s, minutesLabel)
 	}
 
-	noteLabel := widget.NewLabel("Note: NetBird will be brought up and down during collection")
+	noteLabel := widget.NewLabel(tr("Note: NetBird will be brought up and down during collection"))
 
 	runForDurationCheck.OnChanged = func(checked bool) {
 		if checked {
@@ -151,12 +151,12 @@ func (s *serviceClient) buildDurationSection() (*fyne.Container, *widget.Check, 
 
 func validateMinute(s string, minutesLabel *widget.Label) error {
 	if val, err := strconv.Atoi(s); err != nil || val < 1 {
-		return fmt.Errorf("must be a number ≥ 1")
+		return fmt.Errorf(tr("must be a number ≥ 1"))
 	}
 	if s == "1" {
-		minutesLabel.SetText("minute")
+		minutesLabel.SetText(tr("minute"))
 	} else {
-		minutesLabel.SetText("minutes")
+		minutesLabel.SetText(tr("minutes"))
 	}
 	return nil
 }
@@ -196,7 +196,7 @@ func (s *serviceClient) getCreateHandler(
 		if uploadCheck.Checked {
 			url = uploadURL.Text
 			if url == "" {
-				statusLabel.SetText("Error: Upload URL is required when upload is enabled")
+				statusLabel.SetText(tr("Error: Upload URL is required when upload is enabled"))
 				enableUIControls(uiControls)
 				return
 			}
@@ -215,13 +215,13 @@ func (s *serviceClient) getCreateHandler(
 		if runForDuration {
 			minutes, err := time.ParseDuration(duration.Text + "m")
 			if err != nil {
-				statusLabel.SetText(fmt.Sprintf("Error: Invalid duration: %v", err))
+				statusLabel.SetText(trf("Error: Invalid duration: %v", err))
 				enableUIControls(uiControls)
 				return
 			}
 			params.duration = minutes
 
-			statusLabel.SetText(fmt.Sprintf("Running in debug mode for %d minutes...", int(minutes.Minutes())))
+			statusLabel.SetText(trf("Running in debug mode for %d minutes...", int(minutes.Minutes())))
 			progressBar.Show()
 			progressBar.SetValue(0)
 
@@ -235,7 +235,7 @@ func (s *serviceClient) getCreateHandler(
 			return
 		}
 
-		statusLabel.SetText("Creating debug bundle...")
+		statusLabel.SetText(tr("Creating debug bundle..."))
 		go s.handleDebugCreation(
 			params,
 			statusLabel,
@@ -283,7 +283,7 @@ func (s *serviceClient) handleRunForDuration(
 		return
 	}
 
-	progressUI.statusLabel.SetText("Bundle created successfully")
+	progressUI.statusLabel.SetText(tr("Bundle created successfully"))
 }
 
 // Get initial state of the service
@@ -342,7 +342,7 @@ func startProgressTracker(ctx context.Context, wg *sync.WaitGroup, duration time
 				}
 
 				progress.progressBar.SetValue(progressVal)
-				progress.statusLabel.SetText(fmt.Sprintf("Running with trace logs... %s remaining", formatDuration(remaining)))
+				progress.statusLabel.SetText(trf("Running with trace logs... %s remaining", formatDuration(remaining)))
 			}
 		}
 	}()
@@ -435,7 +435,7 @@ func (s *serviceClient) collectDebugData(
 
 	wg.Wait()
 	progress.progressBar.Hide()
-	progress.statusLabel.SetText("Collecting debug data...")
+	progress.statusLabel.SetText(tr("Collecting debug data..."))
 
 	if _, err := conn.StopCPUProfile(s.ctx, &proto.StopCPUProfileRequest{}); err != nil {
 		log.Warnf("failed to stop CPU profiling: %v", err)
@@ -458,7 +458,7 @@ func (s *serviceClient) createDebugBundleFromCollection(
 	params *debugCollectionParams,
 	progress *progressUI,
 ) error {
-	progress.statusLabel.SetText("Creating debug bundle with collected logs...")
+	progress.statusLabel.SetText(tr("Creating debug bundle with collected logs..."))
 
 	request := &proto.DebugBundleRequest{
 		Anonymize:  params.anonymize,
@@ -538,7 +538,7 @@ func (s *serviceClient) handleDebugCreation(
 	conn, err := s.getSrvClient(failFastTimeout)
 	if err != nil {
 		log.Errorf("Failed to get client for debug: %v", err)
-		statusLabel.SetText(fmt.Sprintf("Error: %v", err))
+		statusLabel.SetText(trf("Error: %v", err))
 		enableUIControls(uiControls)
 		return
 	}
@@ -563,7 +563,7 @@ func (s *serviceClient) handleDebugCreation(
 	resp, err := s.createDebugBundle(params.anonymize, params.systemInfo, params.uploadURL)
 	if err != nil {
 		log.Errorf("Failed to create debug bundle: %v", err)
-		statusLabel.SetText(fmt.Sprintf("Error creating bundle: %v", err))
+		statusLabel.SetText(trf("Error creating bundle: %v", err))
 		enableUIControls(uiControls)
 		return
 	}
@@ -583,7 +583,7 @@ func (s *serviceClient) handleDebugCreation(
 	}
 
 	enableUIControls(uiControls)
-	statusLabel.SetText("Bundle created successfully")
+	statusLabel.SetText(tr("Bundle created successfully"))
 }
 
 func (s *serviceClient) createDebugBundle(anonymize bool, systemInfo bool, uploadURL string) (*proto.DebugBundleResponse, error) {
@@ -630,26 +630,25 @@ func createButtonWithAction(label string, action func()) *widget.Button {
 // showUploadFailedDialog displays a dialog when upload fails
 func showUploadFailedDialog(w fyne.Window, localPath, failureReason string) {
 	content := container.NewVBox(
-		widget.NewLabel(fmt.Sprintf("Bundle upload failed:\n%s\n\n"+
-			"A local copy was saved at:\n%s", failureReason, localPath)),
+		widget.NewLabel(trf("Bundle upload failed:\n%s\n\nA local copy was saved at:\n%s", failureReason, localPath)),
 	)
 
-	customDialog := dialog.NewCustom("Upload Failed", "Cancel", content, w)
+	customDialog := dialog.NewCustom(tr("Upload Failed"), tr("Cancel"), content, w)
 
 	buttonBox := container.NewHBox(
-		createButtonWithAction("Open file", func() {
+		createButtonWithAction(tr("Open file"), func() {
 			log.Infof("Attempting to open local file: %s", localPath)
 			if openErr := open.Start(localPath); openErr != nil {
 				log.Errorf("Failed to open local file '%s': %v", localPath, openErr)
-				dialog.ShowError(fmt.Errorf("open the local file:\n%s\n\nError: %v", localPath, openErr), w)
+				dialog.ShowError(fmt.Errorf(tr("open the local file:\n%s\n\nError: %v"), localPath, openErr), w)
 			}
 		}),
-		createButtonWithAction("Open folder", func() {
+		createButtonWithAction(tr("Open folder"), func() {
 			folderPath := filepath.Dir(localPath)
 			log.Infof("Attempting to open local folder: %s", folderPath)
 			if openErr := open.Start(folderPath); openErr != nil {
 				log.Errorf("Failed to open local folder '%s': %v", folderPath, openErr)
-				dialog.ShowError(fmt.Errorf("open the local folder:\n%s\n\nError: %v", folderPath, openErr), w)
+				dialog.ShowError(fmt.Errorf(tr("open the local folder:\n%s\n\nError: %v"), folderPath, openErr), w)
 			}
 		}),
 	)
@@ -666,17 +665,17 @@ func showUploadSuccessDialog(a fyne.App, w fyne.Window, localPath, uploadedKey s
 	keyEntry.Disable()
 
 	content := container.NewVBox(
-		widget.NewLabel("Bundle uploaded successfully!"),
+		widget.NewLabel(tr("Bundle uploaded successfully!")),
 		widget.NewLabel(""),
-		widget.NewLabel("Upload key:"),
+		widget.NewLabel(tr("Upload key:")),
 		keyEntry,
 		widget.NewLabel(""),
-		widget.NewLabel(fmt.Sprintf("Local copy saved at:\n%s", localPath)),
+		widget.NewLabel(trf("Local copy saved at:\n%s", localPath)),
 	)
 
-	customDialog := dialog.NewCustom("Upload Successful", "OK", content, w)
+	customDialog := dialog.NewCustom(tr("Upload Successful"), tr("OK"), content, w)
 
-	copyBtn := createButtonWithAction("Copy key", func() {
+	copyBtn := createButtonWithAction(tr("Copy key"), func() {
 		a.Clipboard().SetContent(uploadedKey)
 		log.Info("Upload key copied to clipboard")
 	})
@@ -689,11 +688,10 @@ func showUploadSuccessDialog(a fyne.App, w fyne.Window, localPath, uploadedKey s
 // showBundleCreatedDialog displays a dialog when bundle is created without upload
 func showBundleCreatedDialog(w fyne.Window, localPath string) {
 	content := container.NewVBox(
-		widget.NewLabel(fmt.Sprintf("Bundle created locally at:\n%s\n\n"+
-			"Administrator privileges may be required to access the file.", localPath)),
+		widget.NewLabel(trf("Bundle created locally at:\n%s\n\nAdministrator privileges may be required to access the file.", localPath)),
 	)
 
-	customDialog := dialog.NewCustom("Debug Bundle Created", "Cancel", content, w)
+	customDialog := dialog.NewCustom(tr("Debug Bundle Created"), tr("Cancel"), content, w)
 
 	buttonBox := createButtonBox(localPath, w, nil)
 	content.Add(buttonBox)
@@ -706,20 +704,20 @@ func createButtonBox(localPath string, w fyne.Window, elems ...fyne.Widget) *fyn
 		box.Add(elem)
 	}
 
-	fileBtn := createButtonWithAction("Open file", func() {
+	fileBtn := createButtonWithAction(tr("Open file"), func() {
 		log.Infof("Attempting to open local file: %s", localPath)
 		if openErr := open.Start(localPath); openErr != nil {
 			log.Errorf("Failed to open local file '%s': %v", localPath, openErr)
-			dialog.ShowError(fmt.Errorf("open the local file:\n%s\n\nError: %v", localPath, openErr), w)
+			dialog.ShowError(fmt.Errorf(tr("open the local file:\n%s\n\nError: %v"), localPath, openErr), w)
 		}
 	})
 
-	folderBtn := createButtonWithAction("Open folder", func() {
+	folderBtn := createButtonWithAction(tr("Open folder"), func() {
 		folderPath := filepath.Dir(localPath)
 		log.Infof("Attempting to open local folder: %s", folderPath)
 		if openErr := open.Start(folderPath); openErr != nil {
 			log.Errorf("Failed to open local folder '%s': %v", folderPath, openErr)
-			dialog.ShowError(fmt.Errorf("open the local folder:\n%s\n\nError: %v", folderPath, openErr), w)
+			dialog.ShowError(fmt.Errorf(tr("open the local folder:\n%s\n\nError: %v"), folderPath, openErr), w)
 		}
 	})
 

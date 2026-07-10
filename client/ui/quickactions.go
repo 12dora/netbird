@@ -291,8 +291,8 @@ func (s *serviceClient) showQuickActionsUI() {
 	connectedCircle := canvas.NewImageFromResource(resourceConnectedPng)
 	disconnectedCircle := canvas.NewImageFromResource(resourceDisconnectedPng)
 
-	connectedLabelText := "Disconnect"
-	disconnectedLabelText := "Connect"
+	connectedLabelText := tr("Disconnect")
+	disconnectedLabelText := tr("Connect")
 
 	toggleConnectionButton := widget.NewButtonWithIcon(disconnectedLabelText, disconnectedCircle.Resource, func() {
 		// This button's tap function will be set when an ui state arrives via the uiChan channel.
@@ -301,7 +301,7 @@ func (s *serviceClient) showQuickActionsUI() {
 	// Button starts disabled until the first ui state arrives.
 	toggleConnectionButton.Disable()
 
-	hintLabelText := fmt.Sprintf("You can always access NetBird from your %s.", getSystemTrayName())
+	hintLabelText := trf("You can always access NetBird from your %s.", tr(getSystemTrayName()))
 	hintLabel := widget.NewLabel(hintLabelText)
 
 	content := container.NewVBox(

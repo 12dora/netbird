@@ -196,8 +196,8 @@ func watchSettingsChanges(a fyne.App, client *serviceClient) {
 // showErrorMessage displays an error message in a simple window.
 func showErrorMessage(msg string) {
 	a := app.New()
-	w := a.NewWindow("NetBird Error")
-	label := widget.NewLabel(msg)
+	w := a.NewWindow(tr("NetBird Error"))
+	label := widget.NewLabel(tr(msg))
 	label.Wrapping = fyne.TextWrapWord
 	w.SetContent(label)
 	w.Resize(fyne.NewSize(400, 100))
@@ -481,7 +481,7 @@ func (s *serviceClient) showSettingsUI() {
 	// (see comment in checkAndUpdateFeatures).
 
 	// add settings window UI elements.
-	s.wSettings = s.app.NewWindow("NetBird Settings")
+	s.wSettings = s.app.NewWindow(tr("NetBird Settings"))
 	s.wSettings.SetOnClosed(s.cancel)
 
 	s.iMngURL = widget.NewEntry()
@@ -493,19 +493,19 @@ func (s *serviceClient) showSettingsUI() {
 	s.iInterfacePort = widget.NewEntry()
 	s.iMTU = widget.NewEntry()
 
-	s.sRosenpassPermissive = widget.NewCheck("Enable Rosenpass permissive mode", nil)
+	s.sRosenpassPermissive = widget.NewCheck(tr("Enable Rosenpass permissive mode"), nil)
 
-	s.sNetworkMonitor = widget.NewCheck("Restarts NetBird when the network changes", nil)
-	s.sDisableDNS = widget.NewCheck("Keeps system DNS settings unchanged", nil)
-	s.sDisableClientRoutes = widget.NewCheck("This peer won't route traffic to other peers", nil)
-	s.sDisableServerRoutes = widget.NewCheck("This peer won't act as router for others", nil)
-	s.sDisableIPv6 = widget.NewCheck("Disable IPv6 overlay addressing", nil)
-	s.sBlockLANAccess = widget.NewCheck("Blocks local network access when used as exit node", nil)
-	s.sEnableSSHRoot = widget.NewCheck("Enable SSH Root Login", nil)
-	s.sEnableSSHSFTP = widget.NewCheck("Enable SSH SFTP", nil)
-	s.sEnableSSHLocalPortForward = widget.NewCheck("Enable SSH Local Port Forwarding", nil)
-	s.sEnableSSHRemotePortForward = widget.NewCheck("Enable SSH Remote Port Forwarding", nil)
-	s.sDisableSSHAuth = widget.NewCheck("Disable SSH Authentication", nil)
+	s.sNetworkMonitor = widget.NewCheck(tr("Restarts NetBird when the network changes"), nil)
+	s.sDisableDNS = widget.NewCheck(tr("Keeps system DNS settings unchanged"), nil)
+	s.sDisableClientRoutes = widget.NewCheck(tr("This peer won't route traffic to other peers"), nil)
+	s.sDisableServerRoutes = widget.NewCheck(tr("This peer won't act as router for others"), nil)
+	s.sDisableIPv6 = widget.NewCheck(tr("Disable IPv6 overlay addressing"), nil)
+	s.sBlockLANAccess = widget.NewCheck(tr("Blocks local network access when used as exit node"), nil)
+	s.sEnableSSHRoot = widget.NewCheck(tr("Enable SSH Root Login"), nil)
+	s.sEnableSSHSFTP = widget.NewCheck(tr("Enable SSH SFTP"), nil)
+	s.sEnableSSHLocalPortForward = widget.NewCheck(tr("Enable SSH Local Port Forwarding"), nil)
+	s.sEnableSSHRemotePortForward = widget.NewCheck(tr("Enable SSH Remote Port Forwarding"), nil)
+	s.sDisableSSHAuth = widget.NewCheck(tr("Disable SSH Authentication"), nil)
 	s.iSSHJWTCacheTTL = widget.NewEntry()
 
 	s.wSettings.SetContent(s.getSettingsForm())
@@ -526,14 +526,14 @@ func (s *serviceClient) getConnectionForm() *widget.Form {
 	}
 	return &widget.Form{
 		Items: []*widget.FormItem{
-			{Text: "Profile", Widget: widget.NewLabel(activeProfName)},
-			{Text: "Management URL", Widget: s.iMngURL},
-			{Text: "Pre-shared Key", Widget: s.iPreSharedKey},
-			{Text: "Quantum-Resistance", Widget: s.sRosenpassPermissive},
-			{Text: "Interface Name", Widget: s.iInterfaceName},
-			{Text: "Interface Port", Widget: s.iInterfacePort, HintText: "If set to 0, a random free port will be used"},
-			{Text: "MTU", Widget: s.iMTU},
-			{Text: "Log File", Widget: s.iLogFile},
+			{Text: tr("Profile"), Widget: widget.NewLabel(activeProfName)},
+			{Text: tr("Management URL"), Widget: s.iMngURL},
+			{Text: tr("Pre-shared Key"), Widget: s.iPreSharedKey},
+			{Text: tr("Quantum-Resistance"), Widget: s.sRosenpassPermissive},
+			{Text: tr("Interface Name"), Widget: s.iInterfaceName},
+			{Text: tr("Interface Port"), Widget: s.iInterfacePort, HintText: tr("If set to 0, a random free port will be used")},
+			{Text: tr("MTU"), Widget: s.iMTU},
+			{Text: tr("Log File"), Widget: s.iLogFile},
 		},
 	}
 }
@@ -546,7 +546,7 @@ func (s *serviceClient) saveSettings() {
 		// Continue with default behavior if features can't be retrieved
 	} else if features != nil && features.DisableUpdateSettings {
 		log.Warn("Configuration updates are disabled by daemon")
-		dialog.ShowError(fmt.Errorf("configuration updates are disabled by daemon"), s.wSettings)
+		dialog.ShowError(errors.New(tr("configuration updates are disabled by daemon")), s.wSettings)
 		return
 	}
 
@@ -576,7 +576,7 @@ func (s *serviceClient) saveSettings() {
 func (s *serviceClient) validateSettings() error {
 	if s.iPreSharedKey.Text != "" && s.iPreSharedKey.Text != censoredPreSharedKey {
 		if _, err := wgtypes.ParseKey(s.iPreSharedKey.Text); err != nil {
-			return fmt.Errorf("invalid pre-shared key value")
+			return errors.New(tr("invalid pre-shared key value"))
 		}
 	}
 	return nil
@@ -585,10 +585,10 @@ func (s *serviceClient) validateSettings() error {
 func (s *serviceClient) parseNumericSettings() (int64, int64, error) {
 	port, err := strconv.ParseInt(strings.TrimSpace(strings.TrimSuffix(s.iInterfacePort.Text, mdmFieldSuffix)), 10, 64)
 	if err != nil {
-		return 0, 0, errors.New("invalid interface port")
+		return 0, 0, errors.New(tr("invalid interface port"))
 	}
 	if port < 0 || port > 65535 {
-		return 0, 0, errors.New("invalid interface port: out of range 0-65535")
+		return 0, 0, errors.New(tr("invalid interface port: out of range 0-65535"))
 	}
 
 	var mtu int64
@@ -596,10 +596,10 @@ func (s *serviceClient) parseNumericSettings() (int64, int64, error) {
 	if mtuText != "" {
 		mtu, err = strconv.ParseInt(mtuText, 10, 64)
 		if err != nil {
-			return 0, 0, errors.New("invalid MTU value")
+			return 0, 0, errors.New(tr("invalid MTU value"))
 		}
 		if mtu < iface.MinMTU || mtu > iface.MaxMTU {
-			return 0, 0, fmt.Errorf("MTU must be between %d and %d bytes", iface.MinMTU, iface.MaxMTU)
+			return 0, 0, errors.New(trf("MTU must be between %d and %d bytes", iface.MinMTU, iface.MaxMTU))
 		}
 	}
 
@@ -683,10 +683,10 @@ func (s *serviceClient) buildSetConfigRequest(iMngURL string, port, mtu int64) (
 	if sshJWTCacheTTLText != "" {
 		sshJWTCacheTTL, err := strconv.ParseInt(sshJWTCacheTTLText, 10, 32)
 		if err != nil {
-			return nil, errors.New("invalid SSH JWT Cache TTL value")
+			return nil, errors.New(tr("invalid SSH JWT Cache TTL value"))
 		}
 		if sshJWTCacheTTL < 0 || sshJWTCacheTTL > maxSSHJWTCacheTTL {
-			return nil, fmt.Errorf("SSH JWT Cache TTL must be between 0 and %d seconds", maxSSHJWTCacheTTL)
+			return nil, errors.New(trf("SSH JWT Cache TTL must be between 0 and %d seconds", maxSSHJWTCacheTTL))
 		}
 		sshJWTCacheTTL32 := int32(sshJWTCacheTTL)
 		req.SshJWTCacheTTL = &sshJWTCacheTTL32
@@ -747,13 +747,13 @@ func (s *serviceClient) getSettingsForm() fyne.CanvasObject {
 	networkForm := s.getNetworkForm()
 	sshForm := s.getSSHForm()
 	tabs := container.NewAppTabs(
-		container.NewTabItem("Connection", connectionForm),
-		container.NewTabItem("Network", networkForm),
-		container.NewTabItem("SSH", sshForm),
+		container.NewTabItem(tr("Connection"), connectionForm),
+		container.NewTabItem(tr("Network"), networkForm),
+		container.NewTabItem(tr("SSH"), sshForm),
 	)
-	saveButton := widget.NewButtonWithIcon("Save", theme.ConfirmIcon(), s.saveSettings)
+	saveButton := widget.NewButtonWithIcon(tr("Save"), theme.ConfirmIcon(), s.saveSettings)
 	saveButton.Importance = widget.HighImportance
-	cancelButton := widget.NewButtonWithIcon("Cancel", theme.CancelIcon(), func() {
+	cancelButton := widget.NewButtonWithIcon(tr("Cancel"), theme.CancelIcon(), func() {
 		s.wSettings.Close()
 	})
 	buttonContainer := container.NewHBox(
@@ -767,12 +767,12 @@ func (s *serviceClient) getSettingsForm() fyne.CanvasObject {
 func (s *serviceClient) getNetworkForm() *widget.Form {
 	return &widget.Form{
 		Items: []*widget.FormItem{
-			{Text: "Network Monitor", Widget: s.sNetworkMonitor},
-			{Text: "Disable DNS", Widget: s.sDisableDNS},
-			{Text: "Disable Client Routes", Widget: s.sDisableClientRoutes},
-			{Text: "Disable Server Routes", Widget: s.sDisableServerRoutes},
-			{Text: "Disable IPv6", Widget: s.sDisableIPv6},
-			{Text: "Disable LAN Access", Widget: s.sBlockLANAccess},
+			{Text: tr("Network Monitor"), Widget: s.sNetworkMonitor},
+			{Text: tr("Disable DNS"), Widget: s.sDisableDNS},
+			{Text: tr("Disable Client Routes"), Widget: s.sDisableClientRoutes},
+			{Text: tr("Disable Server Routes"), Widget: s.sDisableServerRoutes},
+			{Text: tr("Disable IPv6"), Widget: s.sDisableIPv6},
+			{Text: tr("Disable LAN Access"), Widget: s.sBlockLANAccess},
 		},
 	}
 }
@@ -780,12 +780,12 @@ func (s *serviceClient) getNetworkForm() *widget.Form {
 func (s *serviceClient) getSSHForm() *widget.Form {
 	return &widget.Form{
 		Items: []*widget.FormItem{
-			{Text: "Enable SSH Root Login", Widget: s.sEnableSSHRoot},
-			{Text: "Enable SSH SFTP", Widget: s.sEnableSSHSFTP},
-			{Text: "Enable SSH Local Port Forwarding", Widget: s.sEnableSSHLocalPortForward},
-			{Text: "Enable SSH Remote Port Forwarding", Widget: s.sEnableSSHRemotePortForward},
-			{Text: "Disable SSH Authentication", Widget: s.sDisableSSHAuth},
-			{Text: "JWT Cache TTL (seconds, 0=disabled)", Widget: s.iSSHJWTCacheTTL},
+			{Text: tr("Enable SSH Root Login"), Widget: s.sEnableSSHRoot},
+			{Text: tr("Enable SSH SFTP"), Widget: s.sEnableSSHSFTP},
+			{Text: tr("Enable SSH Local Port Forwarding"), Widget: s.sEnableSSHLocalPortForward},
+			{Text: tr("Enable SSH Remote Port Forwarding"), Widget: s.sEnableSSHRemotePortForward},
+			{Text: tr("Disable SSH Authentication"), Widget: s.sDisableSSHAuth},
+			{Text: tr("JWT Cache TTL (seconds, 0=disabled)"), Widget: s.iSSHJWTCacheTTL},
 		},
 	}
 }
@@ -938,7 +938,7 @@ func (s *serviceClient) updateStatus() error {
 		if err != nil {
 			log.Errorf("get service status: %v", err)
 			if s.connected {
-				s.notifier.Send("Error", "Connection to service lost")
+				s.notifier.Send(tr("Error"), tr("Connection to service lost"))
 			}
 			s.setDisconnectedStatus()
 			return err
@@ -963,8 +963,8 @@ func (s *serviceClient) updateStatus() error {
 			} else {
 				systray.SetTemplateIcon(iconConnectedMacOS, s.icConnected)
 			}
-			systray.SetTooltip("NetBird (Connected)")
-			s.mStatus.SetTitle("Connected")
+			systray.SetTooltip(tr("NetBird (Connected)"))
+			s.mStatus.SetTitle(tr("Connected"))
 			s.mStatus.SetIcon(s.icConnectedDot)
 			s.mUp.Disable()
 			s.mDown.Enable()
@@ -997,8 +997,8 @@ func (s *serviceClient) updateStatus() error {
 			}
 
 			daemonVersionTitle := normalizedVersion(s.daemonVersion)
-			s.mVersionDaemon.SetTitle(fmt.Sprintf("Daemon: %s", daemonVersionTitle))
-			s.mVersionDaemon.SetTooltip(fmt.Sprintf("Daemon version: %s", daemonVersionTitle))
+			s.mVersionDaemon.SetTitle(trf("Daemon: %s", daemonVersionTitle))
+			s.mVersionDaemon.SetTooltip(trf("Daemon version: %s", daemonVersionTitle))
 			s.mVersionDaemon.Show()
 		}
 
@@ -1026,8 +1026,8 @@ func (s *serviceClient) setDisconnectedStatus() {
 	} else {
 		systray.SetTemplateIcon(iconDisconnectedMacOS, s.icDisconnected)
 	}
-	systray.SetTooltip("NetBird (Disconnected)")
-	s.mStatus.SetTitle("Disconnected")
+	systray.SetTooltip(tr("NetBird (Disconnected)"))
+	s.mStatus.SetTitle(tr("Disconnected"))
 	s.mStatus.SetIcon(s.icDisconnectedDot)
 	s.mDown.Disable()
 	s.mUp.Enable()
@@ -1040,8 +1040,8 @@ func (s *serviceClient) setDisconnectedStatus() {
 func (s *serviceClient) setConnectingStatus() {
 	s.connected = false
 	systray.SetTemplateIcon(iconConnectingMacOS, s.icConnecting)
-	systray.SetTooltip("NetBird (Connecting)")
-	s.mStatus.SetTitle("Connecting")
+	systray.SetTooltip(tr("NetBird (Connecting)"))
+	s.mStatus.SetTitle(tr("Connecting"))
 	s.mUp.Disable()
 	s.mDown.Enable()
 	s.mNetworks.Disable()
@@ -1053,7 +1053,7 @@ func (s *serviceClient) onTrayReady() {
 	systray.SetTooltip("NetBird")
 
 	// setup systray menu items
-	s.mStatus = systray.AddMenuItem("Disconnected", "Disconnected")
+	s.mStatus = systray.AddMenuItem(tr("Disconnected"), tr("Disconnected"))
 	s.mStatus.SetIcon(s.icDisconnectedDot)
 	s.mStatus.Disable()
 
@@ -1084,20 +1084,20 @@ func (s *serviceClient) onTrayReady() {
 	s.profilesEnabled = true
 
 	systray.AddSeparator()
-	s.mUp = systray.AddMenuItem("Connect", "Connect")
-	s.mDown = systray.AddMenuItem("Disconnect", "Disconnect")
+	s.mUp = systray.AddMenuItem(tr("Connect"), tr("Connect"))
+	s.mDown = systray.AddMenuItem(tr("Disconnect"), tr("Disconnect"))
 	s.mDown.Disable()
 	systray.AddSeparator()
 
-	s.mSettings = systray.AddMenuItem("Settings", disabledMenuDescr)
-	s.mAllowSSH = s.mSettings.AddSubMenuItemCheckbox("Allow SSH", allowSSHMenuDescr, false)
-	s.mAutoConnect = s.mSettings.AddSubMenuItemCheckbox("Connect on Startup", autoConnectMenuDescr, false)
-	s.mEnableRosenpass = s.mSettings.AddSubMenuItemCheckbox("Enable Quantum-Resistance", quantumResistanceMenuDescr, false)
-	s.mBlockInbound = s.mSettings.AddSubMenuItemCheckbox("Block Inbound Connections", blockInboundMenuDescr, false)
-	s.mNotifications = s.mSettings.AddSubMenuItemCheckbox("Notifications", notificationsMenuDescr, false)
+	s.mSettings = systray.AddMenuItem(tr("Settings"), disabledMenuDescr)
+	s.mAllowSSH = s.mSettings.AddSubMenuItemCheckbox(tr("Allow SSH"), tr(allowSSHMenuDescr), false)
+	s.mAutoConnect = s.mSettings.AddSubMenuItemCheckbox(tr("Connect on Startup"), tr(autoConnectMenuDescr), false)
+	s.mEnableRosenpass = s.mSettings.AddSubMenuItemCheckbox(tr("Enable Quantum-Resistance"), tr(quantumResistanceMenuDescr), false)
+	s.mBlockInbound = s.mSettings.AddSubMenuItemCheckbox(tr("Block Inbound Connections"), tr(blockInboundMenuDescr), false)
+	s.mNotifications = s.mSettings.AddSubMenuItemCheckbox(tr("Notifications"), tr(notificationsMenuDescr), false)
 	s.mSettings.AddSeparator()
-	s.mAdvancedSettings = s.mSettings.AddSubMenuItem("Advanced Settings", advancedSettingsMenuDescr)
-	s.mCreateDebugBundle = s.mSettings.AddSubMenuItem("Create Debug Bundle", debugBundleMenuDescr)
+	s.mAdvancedSettings = s.mSettings.AddSubMenuItem(tr("Advanced Settings"), tr(advancedSettingsMenuDescr))
+	s.mCreateDebugBundle = s.mSettings.AddSubMenuItem(tr("Create Debug Bundle"), tr(debugBundleMenuDescr))
 	s.loadSettings()
 
 	// Disable profile menu if profiles are disabled by daemon.
@@ -1115,32 +1115,32 @@ func (s *serviceClient) onTrayReady() {
 	}
 
 	s.exitNodeMu.Lock()
-	s.mExitNode = systray.AddMenuItem("Exit Node", disabledMenuDescr)
+	s.mExitNode = systray.AddMenuItem(tr("Exit Node"), disabledMenuDescr)
 	s.mExitNode.Disable()
 	s.exitNodeMu.Unlock()
 
-	s.mNetworks = systray.AddMenuItem("Networks", networksMenuDescr)
+	s.mNetworks = systray.AddMenuItem(tr("Networks"), tr(networksMenuDescr))
 	s.mNetworks.Disable()
 	systray.AddSeparator()
 
-	s.mAbout = systray.AddMenuItem("About", "About")
+	s.mAbout = systray.AddMenuItem(tr("About"), tr("About"))
 	s.mAbout.SetIcon(s.icAbout)
 
 	s.mGitHub = s.mAbout.AddSubMenuItem("GitHub", "GitHub")
 
 	versionString := normalizedVersion(version.NetbirdVersion())
-	s.mVersionUI = s.mAbout.AddSubMenuItem(fmt.Sprintf("GUI: %s", versionString), fmt.Sprintf("GUI Version: %s", versionString))
+	s.mVersionUI = s.mAbout.AddSubMenuItem(trf("GUI: %s", versionString), trf("GUI Version: %s", versionString))
 	s.mVersionUI.Disable()
 
 	s.mVersionDaemon = s.mAbout.AddSubMenuItem("", "")
 	s.mVersionDaemon.Disable()
 	s.mVersionDaemon.Hide()
 
-	s.mUpdate = s.mAbout.AddSubMenuItem("Download latest version", latestVersionMenuDescr)
+	s.mUpdate = s.mAbout.AddSubMenuItem(tr("Download latest version"), tr(latestVersionMenuDescr))
 	s.mUpdate.Hide()
 
 	systray.AddSeparator()
-	s.mQuit = systray.AddMenuItem("Quit", quitMenuDescr)
+	s.mQuit = systray.AddMenuItem(tr("Quit"), tr(quitMenuDescr))
 
 	// update exit node menu in case service is already connected
 	go s.updateExitNodes()
@@ -1602,10 +1602,10 @@ func (s *serviceClient) onUpdateAvailable(newVersion string, enforced bool) {
 
 	s.isEnforcedUpdate = enforced
 	if enforced {
-		s.mUpdate.SetTitle("Install version " + newVersion)
+		s.mUpdate.SetTitle(trf("Install version %s", newVersion))
 	} else {
 		s.lastNotifiedVersion = ""
-		s.mUpdate.SetTitle("Download latest version")
+		s.mUpdate.SetTitle(tr("Download latest version"))
 	}
 
 	s.mUpdate.Show()
@@ -1619,7 +1619,7 @@ func (s *serviceClient) onUpdateAvailable(newVersion string, enforced bool) {
 
 	if enforced && s.lastNotifiedVersion != newVersion {
 		s.lastNotifiedVersion = newVersion
-		s.notifier.Send("Update available", "A new version "+newVersion+" is ready to install")
+		s.notifier.Send(tr("Update available"), trf("A new version %s is ready to install", newVersion))
 	}
 }
 
@@ -1727,10 +1727,10 @@ func (s *serviceClient) applyMDMLocks(managed []string) {
 			continue
 		}
 		if set[t.key] {
-			t.item.SetTitle(t.title + " (MDM)")
+			t.item.SetTitle(tr(t.title) + " (MDM)")
 			t.item.Disable()
 		} else {
-			t.item.SetTitle(t.title)
+			t.item.SetTitle(tr(t.title))
 			t.item.Enable()
 		}
 	}
@@ -1751,10 +1751,10 @@ func preSharedKeyPlaceholder(cfg *proto.GetConfigResponse) string {
 	}
 	for _, k := range cfg.MDMManagedFields {
 		if k == mdm.KeyPreSharedKey {
-			return "MDM-managed"
+			return tr("MDM-managed")
 		}
 	}
-	return "configured"
+	return tr("configured")
 }
 
 // applyMDMLocksToSettingsForm disables the per-field input widgets in
@@ -1875,16 +1875,16 @@ func (s *serviceClient) showLoginURL() context.CancelFunc {
 	resIcon := fyne.NewStaticResource("netbird.png", iconAbout)
 
 	if s.wLoginURL == nil {
-		s.wLoginURL = s.app.NewWindow("NetBird Session Expired")
+		s.wLoginURL = s.app.NewWindow(tr("NetBird Session Expired"))
 		s.wLoginURL.Resize(fyne.NewSize(400, 200))
 		s.wLoginURL.SetIcon(resIcon)
 	}
 	// ensure goroutine is cancelled when the window is closed
 	s.wLoginURL.SetOnClosed(func() { cancel() })
 	// add a description label
-	label := widget.NewLabel("Your NetBird session has expired.\nPlease re-authenticate to continue using NetBird.")
+	label := widget.NewLabel(tr("Your NetBird session has expired.\nPlease re-authenticate to continue using NetBird."))
 
-	btn := widget.NewButtonWithIcon("Re-authenticate", theme.ViewRefreshIcon(), func() {
+	btn := widget.NewButtonWithIcon(tr("Re-authenticate"), theme.ViewRefreshIcon(), func() {
 
 		conn, err := s.getSrvClient(defaultFailTimeout)
 		if err != nil {
@@ -1915,11 +1915,11 @@ func (s *serviceClient) showLoginURL() context.CancelFunc {
 		_, err = conn.WaitSSOLogin(ctx, &proto.WaitSSOLoginRequest{UserCode: resp.UserCode})
 		if err != nil {
 			log.Errorf("Waiting sso login failed with: %v", err)
-			label.SetText("Waiting login failed, please create \na debug bundle in the settings and contact support.")
+			label.SetText(tr("Waiting login failed, please create \na debug bundle in the settings and contact support."))
 			return
 		}
 
-		label.SetText("Re-authentication successful.\nReconnecting")
+		label.SetText(tr("Re-authentication successful.\nReconnecting"))
 		status, err := conn.Status(ctx, &proto.StatusRequest{})
 		if err != nil {
 			log.Errorf("get service status: %v", err)
@@ -1927,7 +1927,7 @@ func (s *serviceClient) showLoginURL() context.CancelFunc {
 		}
 
 		if status.Status == string(internal.StatusConnected) {
-			label.SetText("Already connected.\nClosing this window.")
+			label.SetText(tr("Already connected.\nClosing this window."))
 			time.Sleep(2 * time.Second)
 			s.wLoginURL.Close()
 			return
@@ -1935,12 +1935,12 @@ func (s *serviceClient) showLoginURL() context.CancelFunc {
 
 		_, err = conn.Up(ctx, &proto.UpRequest{})
 		if err != nil {
-			label.SetText("Reconnecting failed, please create \na debug bundle in the settings and contact support.")
+			label.SetText(tr("Reconnecting failed, please create \na debug bundle in the settings and contact support."))
 			log.Errorf("Reconnecting failed with: %v", err)
 			return
 		}
 
-		label.SetText("Connection successful.\nClosing this window.")
+		label.SetText(tr("Connection successful.\nClosing this window."))
 		time.Sleep(time.Second)
 
 		s.wLoginURL.Close()
