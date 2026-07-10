@@ -1,0 +1,11 @@
+# 复制为 turnserver.conf, 把 user= 的口令换成 .env 里的 TURN_PASSWORD。
+listening-port=3478
+fingerprint
+lt-cred-mech
+user=netbird:replace-with-TURN_PASSWORD-from-env
+realm=netbird.example.com
+no-tls
+no-dtls
+no-cli
+min-port=49152
+max-port=65535

@@ -1,0 +1,161 @@
+# jiefakj 本机联调环境:Authentik(外部) + EasyAuth 连接器(外部) + NetBird 全栈 + VLAN 模拟
+#
+# 拓扑:
+#   nb-core           NetBird 控制面 + 各 peer 的"互联网/办公网出口"
+#   vlan1 (internal)  保密 VLAN 10.10.1.0/24:secret-server 只在此网
+#   vlan2 (internal)  办公 VLAN 10.10.2.0/24:office/unauth peer 的接入网
+#
+#   office-peer 与 secret-server 无共同网络,唯一通路是
+#   office-peer --wireguard--> router-peer(vlan1 路由 peer, masquerade)--> secret-server
+#
+# 依赖外部服务(已在本机运行):
+#   Authentik  https://auth.example.com(远端 nginx 隧道回本机 :19000)
+#   EasyAuth   http://127.0.0.1:8001(容器经 host.docker.internal:33073 访问本管理面)
+
+x-default: &default
+  restart: 'unless-stopped'
+  logging:
+    driver: 'json-file'
+    options:
+      max-size: '100m'
+      max-file: '2'
+
+# SSO/setup-key 登录统一由 `docker compose exec <peer> netbird up ...` 触发,
+# 官方入口脚本会在无凭据时自动发起 SSO 并因超时反复重启容器,故只跑 daemon。
+x-peer: &peer
+  <<: *default
+  image: netbirdio/netbird:0.74.3
+  entrypoint: ["/bin/sh", "-c", "mkdir -p /var/log/netbird && exec /usr/local/bin/netbird service run --log-file console"]
+  environment:
+    - NB_MANAGEMENT_URL=http://management:443
+    - NB_ADMIN_URL=http://localhost:8090
+  cap_add:
+    - NET_ADMIN
+  devices:
+    - /dev/net/tun:/dev/net/tun
+
+services:
+  dashboard:
+    <<: *default
+    image: netbirdio/dashboard:latest
+    ports:
+      - "127.0.0.1:8090:80"
+    environment:
+      - NETBIRD_MGMT_API_ENDPOINT=http://localhost:33073
+      - NETBIRD_MGMT_GRPC_API_ENDPOINT=http://localhost:33073
+      - AUTH_AUDIENCE=netbird
+      - AUTH_CLIENT_ID=netbird
+      - AUTH_AUTHORITY=https://auth.example.com/application/o/netbird/
+      - USE_AUTH0=false
+      - AUTH_SUPPORTED_SCOPES=openid profile email offline_access
+      - AUTH_REDIRECT_URI=/nb-auth
+      - AUTH_SILENT_REDIRECT_URI=/nb-silent-auth
+      - NETBIRD_TOKEN_SOURCE=accessToken
+    networks: [nb-core]
+
+  signal:
+    <<: *default
+    image: netbirdio/signal:0.74.3
+    volumes:
+      - netbird-signal:/var/lib/netbird
+    command: ["--log-file", "console", "--port", "80"]
+    networks: [nb-core]
+
+  relay:
+    <<: *default
+    image: netbirdio/relay:0.74.3
+    environment:
+      - NB_LOG_LEVEL=info
+      - NB_LISTEN_ADDRESS=:33080
+      - NB_EXPOSED_ADDRESS=rel://relay:33080
+      - NB_AUTH_SECRET=${NETBIRD_RELAY_AUTH_SECRET}
+    networks: [nb-core]
+
+  coturn:
+    <<: *default
+    image: coturn/coturn:latest
+    volumes:
+      - ./turnserver.conf:/etc/turnserver.conf:ro
+    command: ["-c", "/etc/turnserver.conf"]
+    networks: [nb-core]
+
+  management:
+    <<: *default
+    image: netbird-management-jiefakj:local
+    depends_on: [signal, relay]
+    volumes:
+      - netbird-mgmt:/var/lib/netbird
+      - ./management.json:/etc/netbird/management.json:ro
+    ports:
+      - "127.0.0.1:33073:443"
+    environment:
+      - TURN_PASSWORD=${TURN_PASSWORD}
+      - NETBIRD_RELAY_AUTH_SECRET=${NETBIRD_RELAY_AUTH_SECRET}
+      - NETBIRD_DATASTORE_ENC_KEY=${NETBIRD_DATASTORE_ENC_KEY}
+      - NB_BLOCKED_USER_MESSAGE=无 VPN 权限，请前往 https://iam.example.com 申请
+    command: [
+      "--port", "443",
+      "--log-file", "console",
+      "--log-level", "info",
+      "--disable-anonymous-metrics=true",
+      "--single-account-mode-domain=example.com",
+      "--dns-domain=netbird.selfhosted"
+    ]
+    networks: [nb-core]
+
+  # ── VLAN1 保密网段 ────────────────────────────────────────────────
+  secret-server:
+    <<: *default
+    image: nginx:alpine
+    volumes:
+      - ./secret-server:/usr/share/nginx/html:ro
+    networks:
+      vlan1:
+        ipv4_address: 10.10.1.20
+
+  # vlan1 内的路由 peer:宣告 10.10.1.0/24,masquerade 出网
+  router-peer:
+    <<: *peer
+    hostname: router-vlan1
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      nb-core: {}
+      vlan1:
+        ipv4_address: 10.10.1.10
+
+  # ── VLAN2 办公网段 ────────────────────────────────────────────────
+  # 已申请 VPN 权限的办公用户(张三)
+  office-peer:
+    <<: *peer
+    hostname: office-zhangsan
+    networks:
+      nb-core: {}
+      vlan2:
+        ipv4_address: 10.10.2.11
+
+  # 未申请权限的用户(李四),用于验证默认拒绝
+  unauth-peer:
+    <<: *peer
+    hostname: office-lisi
+    networks:
+      nb-core: {}
+      vlan2:
+        ipv4_address: 10.10.2.12
+
+networks:
+  nb-core:
+  vlan1:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.1.0/24
+  vlan2:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.2.0/24
+
+volumes:
+  netbird-mgmt:
+  netbird-signal:

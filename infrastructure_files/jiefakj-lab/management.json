@@ -1,0 +1,91 @@
+{
+    "Stuns": [
+        {
+            "Proto": "udp",
+            "URI": "stun:coturn:3478",
+            "Username": "",
+            "Password": null
+        }
+    ],
+    "TURNConfig": {
+        "Turns": [
+            {
+                "Proto": "udp",
+                "URI": "turn:coturn:3478",
+                "Username": "netbird",
+                "Password": "{{ .TURN_PASSWORD }}"
+            }
+        ],
+        "CredentialsTTL": "12h",
+        "Secret": "secret",
+        "TimeBasedCredentials": false
+    },
+    "Relay": {
+        "Addresses": ["rel://relay:33080"],
+        "CredentialsTTL": "24h",
+        "Secret": "{{ .NETBIRD_RELAY_AUTH_SECRET }}"
+    },
+    "Signal": {
+        "Proto": "http",
+        "URI": "signal:80",
+        "Username": "",
+        "Password": null
+    },
+    "ReverseProxy": {
+        "TrustedHTTPProxies": [],
+        "TrustedHTTPProxiesCount": 0,
+        "TrustedPeers": [
+             "0.0.0.0/0"
+        ]
+    },
+    "DisableDefaultPolicy": true,
+    "Datadir": "",
+    "DataStoreEncryptionKey": "{{ .NETBIRD_DATASTORE_ENC_KEY }}",
+    "StoreConfig": {
+        "Engine": "sqlite"
+    },
+    "HttpConfig": {
+        "Address": "0.0.0.0:443",
+        "AuthIssuer": "https://auth.example.com/application/o/netbird/",
+        "AuthAudience": "netbird",
+        "AuthKeysLocation": "https://auth.example.com/application/o/netbird/jwks/",
+        "AuthUserIDClaim": "sub",
+        "CertFile": "",
+        "CertKey": "",
+        "IdpSignKeyRefreshEnabled": true,
+        "OIDCConfigEndpoint": "https://auth.example.com/application/o/netbird/.well-known/openid-configuration"
+    },
+    "IdpManagerConfig": {
+        "ManagerType": "none"
+    },
+    "DeviceAuthorizationFlow": {
+        "Provider": "hosted",
+        "ProviderConfig": {
+          "Audience": "netbird",
+          "AuthorizationEndpoint": "",
+          "Domain": "",
+          "ClientID": "netbird",
+          "ClientSecret": "",
+          "TokenEndpoint": "https://auth.example.com/application/o/token/",
+          "DeviceAuthEndpoint": "https://auth.example.com/application/o/device/",
+          "Scope": "openid profile email offline_access",
+          "UseIDToken": false,
+          "RedirectURLs": null
+         }
+    },
+    "PKCEAuthorizationFlow": {
+        "ProviderConfig": {
+            "Audience": "netbird",
+            "ClientID": "netbird",
+            "ClientSecret": "",
+            "Domain": "",
+            "AuthorizationEndpoint": "https://auth.example.com/application/o/authorize/",
+            "TokenEndpoint": "https://auth.example.com/application/o/token/",
+            "Scope": "openid profile email offline_access",
+            "RedirectURLs": ["http://localhost:53000"],
+            "UseIDToken": false,
+            "DisablePromptLogin": false,
+            "LoginFlag": 1
+        }
+    }
+}
