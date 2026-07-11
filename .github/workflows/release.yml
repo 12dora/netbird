@@ -126,6 +126,9 @@ jobs:
           retention-days: 30
 
   release:
+    # Publishing on push needs credentials that forks do not receive. Keep the
+    # snapshot build available for pull requests, where no publishing occurs.
+    if: github.repository == 'netbirdio/netbird' || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04-8-core
     outputs:
       release_artifact_url: ${{ steps.upload_release.outputs.artifact-url }}
@@ -345,6 +348,9 @@ jobs:
           retention-days: 7
 
   release_ui:
+    # Publishing on push needs credentials that forks do not receive. Keep the
+    # snapshot build available for pull requests, where no publishing occurs.
+    if: github.repository == 'netbirdio/netbird' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
       release_ui_artifact_url: ${{ steps.upload_release_ui.outputs.artifact-url }}
@@ -460,6 +466,9 @@ jobs:
           retention-days: 3
 
   release_ui_darwin:
+    # Publishing on push needs credentials that forks do not receive. Keep the
+    # snapshot build available for pull requests, where no publishing occurs.
+    if: github.repository == 'netbirdio/netbird' || github.event_name == 'pull_request'
     runs-on: macos-latest
     outputs:
       release_ui_darwin_artifact_url: ${{ steps.upload_release_ui_darwin.outputs.artifact-url }}
