@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -151,7 +152,7 @@ func (s *serviceClient) buildDurationSection() (*fyne.Container, *widget.Check, 
 
 func validateMinute(s string, minutesLabel *widget.Label) error {
 	if val, err := strconv.Atoi(s); err != nil || val < 1 {
-		return fmt.Errorf(tr("must be a number ≥ 1"))
+		return errors.New(tr("must be a number ≥ 1"))
 	}
 	if s == "1" {
 		minutesLabel.SetText(tr("minute"))
