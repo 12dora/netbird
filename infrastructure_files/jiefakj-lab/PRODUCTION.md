@@ -14,10 +14,11 @@
 
 ## 1. 镜像与 fork
 
-- 仅改 **management** 服务端,客户端/dashboard/signal/relay 用官方镜像。本 fork 两个补丁:
+- 仅改 **management** 服务端,客户端/dashboard/signal/relay 用官方镜像。本 fork 三个补丁:
   - **P1** `POST /api/users` 支持显式 `id` 预创建常规用户(`0c83bc5f`)——消除外接 IdP 的 JIT gap,审批通过即权限就位。
   - **P2** `NB_BLOCKED_USER_MESSAGE` 可配置被拦文案(`e931f089`)——未授权用户看到申请入口。
-- **基线**:锁最新稳定 tag(当前 `v0.74.3`),不跟 main。升级 = 在新 tag 上 rebase 这两个 commit → 跑 `management/server/http/handlers/users` 与 `management/server` 单测 → 重建镜像 → 本机联调复验场景 1/2/3 → 上生产。
+  - **P3** OIDC 发现重试——启动时 IdP `/.well-known/openid-configuration` 暂时不可达则 15s 超时 + 指数退避重试(预算 10 分钟),避免 crash loop。
+- **基线**:锁最新稳定 tag(当前 `v0.74.3`),不跟 main。升级 = 在新 tag 上 rebase 这三个 commit → 跑 `management/server/http/handlers/users` 与 `management/server` 单测 → 重建镜像 → 本机联调复验场景 1/2/3 → 上生产。
 - **构建**:`docker build -f management/Dockerfile.multistage -t registry.example.com/netbird-management:v0.74.3-jiefakj.1 .`,推私有 registry,生产按不可变 tag 引用(勿用 `:local`/`:latest`)。
 - **AGPL 合规**(`management/` 为 AGPL-3.0):公司内部自用无触发义务;**若将该管理面作为服务提供给公司外部用户,须依 AGPL 公开含补丁的源码**。建议私有 fork 保留完整 LICENSE,补丁面刻意最小以便审计与合规。
 
@@ -83,7 +84,7 @@
 
 ## 7. 升级流程(锁定)
 
-1. 新版本发布 → 在新稳定 tag 上 `git rebase` P1/P2 两个 commit(补丁面极小,冲突概率低)。
+1. 新版本发布 → 在新稳定 tag 上 `git rebase` P1/P2/P3 三个 commit(补丁面极小,冲突概率低)。
 2. 跑 `go test ./management/server/http/handlers/users/ ./management/server/ -run 'PreCreate|BlockedUser'`。
 3. 重建并推不可变 tag 镜像。
 4. 本机联调栈(`infrastructure_files/jiefakj-lab/`)复验场景 1/2/3。

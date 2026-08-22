@@ -9,7 +9,7 @@ Authentik(外部, auth.example.com)         身份源:OIDC + 设备码/PKCE, JWT
 EasyAuth(外部, iam.example.com)           授权源:审批→授权组→NetBird 连接器周期/事件对账推送
                                           经 host.docker.internal:33073 调本栈管理 API
 ─ 本 compose 栈 ────────────────────────────────────────────────
-management(netbird-management-jiefakj:local, 含 P1/P2 补丁) :33073
+management(netbird-management-jiefakj:local, 含 P1/P2/P3 补丁) :33073
 signal / relay / coturn / dashboard(:8090)
 router-peer   vlan1(10.10.1.10) + nb-core   宣告 10.10.1.0/24 路由, masquerade
 secret-server vlan1(10.10.1.20)             保密业务(nginx), 仅在 vlan1

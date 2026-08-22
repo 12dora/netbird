@@ -88,6 +88,11 @@ services:
       - ./management.json:/etc/netbird/management.json:ro
     ports:
       - "127.0.0.1:33073:443"
+    # 宿主 Surge 在 TUN/fake-IP 档位下会把 example.com 解析成 198.18.x 并经代理转发,
+    # 容器经宿主 DNS 继承该结果后 TLS 握手 EOF → OIDC 发现失败 → 管理面反复重启。
+    # 钉死 VPS 真实 IP,绕过宿主的 fake-IP 路径(与 EasyTrade/EasyAuth 的处理一致)。
+    extra_hosts:
+      - "auth.example.com:203.0.113.10"
     environment:
       - TURN_PASSWORD=${TURN_PASSWORD}
       - NETBIRD_RELAY_AUTH_SECRET=${NETBIRD_RELAY_AUTH_SECRET}
