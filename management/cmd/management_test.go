@@ -19,7 +19,7 @@ const (
 	  "HttpConfig": {
 		"AuthAudience": "https://stageapp/",
 		"AuthIssuer": "https://something.eu.auth0.com/",
-		"OIDCConfigEndpoint": "https://something.eu.auth0.com/.well-known/openid-configuration"
+		"OIDCConfigEndpoint": ""
 	  }
 	}`
 )

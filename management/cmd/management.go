@@ -2,12 +2,15 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/fs"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +18,7 @@ import (
 	"path"
 	"strings"
 	"syscall"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -353,11 +357,196 @@ type OIDCConfigResponse struct {
 	AuthorizationEndpoint string `json:"authorization_endpoint"`
 }
 
-// fetchOIDCConfig fetches OIDC configuration from the IDP
+// oidcRetryConfig controls OIDC discovery timeouts and backoff. Tests replace
+// oidcRetry so they can run without sleeping for real.
+type oidcRetryConfig struct {
+	HTTPTimeout    time.Duration
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
+	TotalBudget    time.Duration
+	JitterFraction float64
+	Sleep          func(ctx context.Context, d time.Duration) error
+	Now            func() time.Time
+}
+
+func defaultOIDCRetryConfig() oidcRetryConfig {
+	return oidcRetryConfig{
+		HTTPTimeout:    15 * time.Second,
+		InitialBackoff: time.Second,
+		MaxBackoff:     30 * time.Second,
+		TotalBudget:    10 * time.Minute,
+		JitterFraction: 0.1,
+		Sleep:          sleepWithContext,
+		Now:            time.Now,
+	}
+}
+
+var oidcRetry = defaultOIDCRetryConfig()
+
+type retryableOIDCError struct {
+	err error
+}
+
+func (e retryableOIDCError) Error() string {
+	if e.err == nil {
+		return "retryable OIDC fetch error"
+	}
+	return e.err.Error()
+}
+
+func (e retryableOIDCError) Unwrap() error {
+	return e.err
+}
+
+func isRetryableOIDCFetchErr(err error) bool {
+	var r retryableOIDCError
+	return errors.As(err, &r)
+}
+
+func isRetryableOIDCStatus(code int) bool {
+	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || code >= 500
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func jitteredBackoff(d time.Duration, fraction float64) time.Duration {
+	if fraction <= 0 || d <= 0 {
+		return d
+	}
+	jittered := float64(d) * (1 + fraction*(2*rand.Float64()-1))
+	if jittered < 0 {
+		return 0
+	}
+	return time.Duration(jittered)
+}
+
+// fetchOIDCConfig fetches OIDC configuration from the IDP, retrying transient
+// failures until success, ctx cancellation, or the retry budget is exhausted.
 func fetchOIDCConfig(ctx context.Context, oidcEndpoint string) (OIDCConfigResponse, error) {
-	res, err := http.Get(oidcEndpoint)
+	retry := oidcRetry
+	if retry.Sleep == nil {
+		retry.Sleep = sleepWithContext
+	}
+	if retry.Now == nil {
+		retry.Now = time.Now
+	}
+	if retry.HTTPTimeout <= 0 {
+		retry.HTTPTimeout = 15 * time.Second
+	}
+	if retry.InitialBackoff <= 0 {
+		retry.InitialBackoff = time.Second
+	}
+	if retry.MaxBackoff <= 0 {
+		retry.MaxBackoff = 30 * time.Second
+	}
+
+	client := &http.Client{Timeout: retry.HTTPTimeout}
+	deadline := retry.Now().Add(retry.TotalBudget)
+	backoff := retry.InitialBackoff
+	var lastErr error
+
+	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return OIDCConfigResponse{}, err
+		}
+
+		config, err := fetchOIDCConfigOnce(ctx, client, oidcEndpoint)
+		if err == nil {
+			if attempt > 1 {
+				log.WithContext(ctx).Infof("fetched OIDC configuration from %s after %d attempts", oidcEndpoint, attempt)
+			}
+			return config, nil
+		}
+		lastErr = err
+
+		if !isRetryableOIDCFetchErr(err) {
+			return OIDCConfigResponse{}, err
+		}
+
+		remaining := deadline.Sub(retry.Now())
+		if remaining <= 0 {
+			return OIDCConfigResponse{}, fmt.Errorf("failed fetching OIDC configuration from endpoint %s after %d attempts: %v", oidcEndpoint, attempt, lastErr)
+		}
+
+		delay := backoff
+		if delay > retry.MaxBackoff {
+			delay = retry.MaxBackoff
+		}
+		delay = jitteredBackoff(delay, retry.JitterFraction)
+		if delay > remaining {
+			delay = remaining
+		}
+
+		log.WithContext(ctx).Warnf("failed fetching OIDC configuration from endpoint %s (attempt %d): %v; retrying in %s",
+			oidcEndpoint, attempt, err, delay)
+
+		if err := retry.Sleep(ctx, delay); err != nil {
+			return OIDCConfigResponse{}, err
+		}
+
+		backoff *= 2
+		if backoff > retry.MaxBackoff {
+			backoff = retry.MaxBackoff
+		}
+	}
+}
+
+// isPermanentOIDCTransportErr reports client.Do errors that retrying cannot fix:
+// a malformed/unsupported endpoint URL, a TLS certificate that fails verification,
+// or a redirect policy failure. Everything else (dial, reset, timeout) is transient.
+func isPermanentOIDCTransportErr(err error) bool {
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return true
+	}
+	var x509Unknown x509.UnknownAuthorityError
+	var x509Host x509.HostnameError
+	var x509Invalid x509.CertificateInvalidError
+	if errors.As(err, &x509Unknown) || errors.As(err, &x509Host) || errors.As(err, &x509Invalid) {
+		return true
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		msg := urlErr.Err.Error()
+		if strings.Contains(msg, "unsupported protocol scheme") || strings.Contains(msg, "stopped after") {
+			return true
+		}
+	}
+	return false
+}
+
+func fetchOIDCConfigOnce(ctx context.Context, client *http.Client, oidcEndpoint string) (OIDCConfigResponse, error) {
+	parsed, err := url.Parse(oidcEndpoint)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return OIDCConfigResponse{}, fmt.Errorf("OIDC configuration endpoint %q is not an absolute http(s) URL", oidcEndpoint)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, oidcEndpoint, nil)
 	if err != nil {
 		return OIDCConfigResponse{}, fmt.Errorf("failed fetching OIDC configuration from endpoint %s %v", oidcEndpoint, err)
+	}
+
+	res, err := client.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return OIDCConfigResponse{}, ctx.Err()
+		}
+		wrapped := fmt.Errorf("failed fetching OIDC configuration from endpoint %s %v", oidcEndpoint, err)
+		if isPermanentOIDCTransportErr(err) {
+			return OIDCConfigResponse{}, wrapped
+		}
+		return OIDCConfigResponse{}, retryableOIDCError{err: wrapped}
 	}
 
 	defer func() {
@@ -369,12 +558,21 @@ func fetchOIDCConfig(ctx context.Context, oidcEndpoint string) (OIDCConfigRespon
 
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
-		return OIDCConfigResponse{}, fmt.Errorf("failed reading OIDC configuration response body: %v", err)
+		if ctx.Err() != nil {
+			return OIDCConfigResponse{}, ctx.Err()
+		}
+		return OIDCConfigResponse{}, retryableOIDCError{
+			err: fmt.Errorf("failed reading OIDC configuration response body: %v", err),
+		}
 	}
 
 	if res.StatusCode != 200 {
-		return OIDCConfigResponse{}, fmt.Errorf("OIDC configuration request returned status %d with response: %s",
+		err := fmt.Errorf("OIDC configuration request returned status %d with response: %s",
 			res.StatusCode, string(body))
+		if isRetryableOIDCStatus(res.StatusCode) {
+			return OIDCConfigResponse{}, retryableOIDCError{err: err}
+		}
+		return OIDCConfigResponse{}, err
 	}
 
 	config := OIDCConfigResponse{}
