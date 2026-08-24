@@ -1,6 +1,8 @@
 package proxy
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	nbgrpc "github.com/netbirdio/netbird/management/internals/shared/grpc"
+	"github.com/netbirdio/netbird/management/server/blockeduser"
 )
 
 func TestAuthCallbackHandler_RateLimiting(t *testing.T) {
@@ -182,4 +185,40 @@ func TestAuthCallbackHandler_RateLimiterConfiguration(t *testing.T) {
 
 	allowed := handler.rateLimiter.Allow(testIP)
 	assert.False(t, allowed, "Should block request that exceeds burst limit")
+}
+
+// Blocked and pending-approval users reach the proxy access-denied page through a path that
+// does not go through the account manager, so it needs its own wiring to NB_BLOCKED_USER_MESSAGE.
+func TestSessionTokenErrorDescriptionHonoursBlockedUserMessage(t *testing.T) {
+	t.Run("defaults are kept when the override is unset", func(t *testing.T) {
+		t.Setenv(blockeduser.MessageEnv, "")
+
+		assert.Equal(t, "Your account is pending approval by an administrator",
+			sessionTokenErrorDescription(nbgrpc.ErrUserPendingApproval))
+		assert.Equal(t, "Your account is blocked",
+			sessionTokenErrorDescription(nbgrpc.ErrUserBlocked))
+	})
+
+	t.Run("account status denials use the override", func(t *testing.T) {
+		const msg = "无 VPN 权限，请前往 https://iam.example.com 申请"
+		t.Setenv(blockeduser.MessageEnv, msg)
+
+		assert.Equal(t, msg, sessionTokenErrorDescription(nbgrpc.ErrUserPendingApproval))
+		assert.Equal(t, msg, sessionTokenErrorDescription(nbgrpc.ErrUserBlocked))
+	})
+
+	t.Run("wrapped account status errors still match", func(t *testing.T) {
+		const msg = "无 VPN 权限，请前往 https://iam.example.com 申请"
+		t.Setenv(blockeduser.MessageEnv, msg)
+
+		wrapped := fmt.Errorf("generate session token: %w", nbgrpc.ErrUserBlocked)
+		assert.Equal(t, msg, sessionTokenErrorDescription(wrapped))
+	})
+
+	t.Run("unrelated failures are never relabelled", func(t *testing.T) {
+		t.Setenv(blockeduser.MessageEnv, "无 VPN 权限，请前往 https://iam.example.com 申请")
+
+		assert.Equal(t, "Service configuration error",
+			sessionTokenErrorDescription(errors.New("signing key unavailable")))
+	})
 }

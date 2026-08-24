@@ -17,6 +17,10 @@
 - 仅改 **management** 服务端,客户端/dashboard/signal/relay 用官方镜像。本 fork 三个补丁:
   - **P1** `POST /api/users` 支持显式 `id` 预创建常规用户(`0c83bc5f`)——消除外接 IdP 的 JIT gap,审批通过即权限就位。
   - **P2** `NB_BLOCKED_USER_MESSAGE` 可配置被拦文案(`e931f089`)——未授权用户看到申请入口。
+    覆盖两条路径:peer 注册(`management/server/peer.go`)与反向代理 SSO 拒绝页
+    (`management/server/http/handlers/proxy/auth.go`,上游 v0.77.1 新增),
+    实现收敛在 `management/server/blockeduser`。仅覆盖账号状态类拒绝,
+    签名/查询失败仍返回上游的通用文案,不被改写。
   - **P3** OIDC 发现重试——启动时 IdP `/.well-known/openid-configuration` 暂时不可达则 15s 超时 + 指数退避重试(预算 10 分钟),避免 crash loop。
 - **基线**:锁最新稳定 tag(当前 `v0.77.1`),不跟 main。升级 = 合入新 tag 并化解冲突 → 跑 `management/server/http/handlers/users` 与 `management/server` 单测 → 重建镜像 → 本机联调复验场景 1/2/3 → 上生产。
 - **构建**:`docker build -f management/Dockerfile.multistage -t registry.example.com/netbird-management:v0.77.1-jiefakj.1 .`,推私有 registry,生产按不可变 tag 引用(勿用 `:local`/`:latest`)。

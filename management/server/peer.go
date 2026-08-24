@@ -28,6 +28,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/server/activity"
 	"github.com/netbirdio/netbird/management/server/affectedpeers"
+	"github.com/netbirdio/netbird/management/server/blockeduser"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/telemetry"
 	"github.com/netbirdio/netbird/shared/management/status"
@@ -686,7 +687,7 @@ func (am *DefaultAccountManager) handleUserAddedPeer(ctx context.Context, accoun
 		return status.Errorf(status.NotFound, "failed adding new peer: user not found")
 	}
 	if user.PendingApproval {
-		return status.Errorf(status.PermissionDenied, "%s", blockedUserMessage("user pending approval cannot add peers"))
+		return status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user pending approval cannot add peers"))
 	}
 
 	if temporary {
@@ -1462,7 +1463,7 @@ func (am *DefaultAccountManager) handleExpiredPeer(ctx context.Context, transact
 func checkIfPeerOwnerIsBlocked(peer *nbpeer.Peer, user *types.User) error {
 	if peer.AddedWithSSOLogin() {
 		if user.IsBlocked() {
-			return status.Errorf(status.PermissionDenied, "%s", blockedUserMessage("user is blocked"))
+			return status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user is blocked"))
 		}
 	}
 	return nil

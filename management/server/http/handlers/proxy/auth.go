@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2"
 
 	nbgrpc "github.com/netbirdio/netbird/management/internals/shared/grpc"
+	"github.com/netbirdio/netbird/management/server/blockeduser"
 	"github.com/netbirdio/netbird/management/server/http/middleware"
 	"github.com/netbirdio/netbird/management/server/types"
 	"github.com/netbirdio/netbird/proxy/auth"
@@ -131,11 +132,13 @@ func (h *AuthCallbackHandler) handleCallback(w http.ResponseWriter, r *http.Requ
 // signing failure does not describe management internals to the browser.
 func sessionTokenErrorDescription(err error) string {
 	if errors.Is(err, nbgrpc.ErrUserPendingApproval) {
-		return "Your account is pending approval by an administrator"
+		return blockeduser.Message("Your account is pending approval by an administrator")
 	}
 	if errors.Is(err, nbgrpc.ErrUserBlocked) {
-		return "Your account is blocked"
+		return blockeduser.Message("Your account is blocked")
 	}
+	// Deliberately not overridden: this branch covers lookup and signing failures, which are
+	// not account-status denials and must not be relabelled as an access request prompt.
 	return "Service configuration error"
 }
 
