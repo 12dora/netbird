@@ -18,8 +18,12 @@
   - **P1** `POST /api/users` 支持显式 `id` 预创建常规用户(`0c83bc5f`)——消除外接 IdP 的 JIT gap,审批通过即权限就位。
   - **P2** `NB_BLOCKED_USER_MESSAGE` 可配置被拦文案(`e931f089`)——未授权用户看到申请入口。
   - **P3** OIDC 发现重试——启动时 IdP `/.well-known/openid-configuration` 暂时不可达则 15s 超时 + 指数退避重试(预算 10 分钟),避免 crash loop。
-- **基线**:锁最新稳定 tag(当前 `v0.74.3`),不跟 main。升级 = 在新 tag 上 rebase 这三个 commit → 跑 `management/server/http/handlers/users` 与 `management/server` 单测 → 重建镜像 → 本机联调复验场景 1/2/3 → 上生产。
-- **构建**:`docker build -f management/Dockerfile.multistage -t registry.example.com/netbird-management:v0.74.3-jiefakj.1 .`,推私有 registry,生产按不可变 tag 引用(勿用 `:local`/`:latest`)。
+- **基线**:锁最新稳定 tag(当前 `v0.77.1`),不跟 main。升级 = 合入新 tag 并化解冲突 → 跑 `management/server/http/handlers/users` 与 `management/server` 单测 → 重建镜像 → 本机联调复验场景 1/2/3 → 上生产。
+- **构建**:`docker build -f management/Dockerfile.multistage -t registry.example.com/netbird-management:v0.77.1-jiefakj.1 .`,推私有 registry,生产按不可变 tag 引用(勿用 `:local`/`:latest`)。
+- **客户端**:v0.77.1 起上游桌面 UI 由 Fyne 改为 Wails v3 + React,并自带简体中文
+  (`client/ui/i18n/locales/zh-CN/common.json`,与 en 453/453 键对齐,已在语言选择器注册)。
+  本 fork 早期自维护的 Fyne 中文补丁已随之删除,桌面包直接用上游 release 产物;
+  本仓库的 `publish-desktop-packages.yml` 只再发布 Linux CLI deb。
 - **AGPL 合规**(`management/` 为 AGPL-3.0):公司内部自用无触发义务;**若将该管理面作为服务提供给公司外部用户,须依 AGPL 公开含补丁的源码**。建议私有 fork 保留完整 LICENSE,补丁面刻意最小以便审计与合规。
 
 ## 2. 部署拓扑
@@ -84,7 +88,10 @@
 
 ## 7. 升级流程(锁定)
 
-1. 新版本发布 → 在新稳定 tag 上 `git rebase` P1/P2/P3 三个 commit(补丁面极小,冲突概率低)。
+1. 新版本发布 → 合入新稳定 tag(`git merge vX.Y.Z`)并化解冲突。补丁面仅限 `management/`,
+   冲突通常只出现在 P3 涉及的 `management/cmd/management_test.go`。
+   注意:该文件里 `OIDCConfigEndpoint` 必须保持为空字符串 —— P3 让 `LoadMgmtConfig` 在端点非空时
+   按 10 分钟预算重试 OIDC 发现,填真实端点会使单测挂起;上游后续新增的同类用例也需一并置空。
 2. 跑 `go test ./management/server/http/handlers/users/ ./management/server/ -run 'PreCreate|BlockedUser'`。
 3. 重建并推不可变 tag 镜像。
 4. 本机联调栈(`infrastructure_files/jiefakj-lab/`)复验场景 1/2/3。
