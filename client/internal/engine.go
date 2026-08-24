@@ -23,6 +23,7 @@ import (
 	"golang.zx2c4.com/wireguard/tun/netstack"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
+	"github.com/netbirdio/netbird/client/anonymize"
 	nberrors "github.com/netbirdio/netbird/client/errors"
 	"github.com/netbirdio/netbird/client/firewall"
 	"github.com/netbirdio/netbird/client/firewall/firewalld"
@@ -58,13 +59,17 @@ import (
 	"github.com/netbirdio/netbird/client/internal/syncstore"
 	"github.com/netbirdio/netbird/client/internal/updater"
 	"github.com/netbirdio/netbird/client/jobexec"
+	"github.com/netbirdio/netbird/client/netstate"
 	cProto "github.com/netbirdio/netbird/client/proto"
 	"github.com/netbirdio/netbird/client/system"
 	nbdns "github.com/netbirdio/netbird/dns"
 	"github.com/netbirdio/netbird/route"
 	mgm "github.com/netbirdio/netbird/shared/management/client"
 	"github.com/netbirdio/netbird/shared/management/domain"
+	sharedgrpc "github.com/netbirdio/netbird/shared/management/grpc"
+	nbnetworkmap "github.com/netbirdio/netbird/shared/management/networkmap"
 	mgmProto "github.com/netbirdio/netbird/shared/management/proto"
+	types "github.com/netbirdio/netbird/shared/management/types"
 	"github.com/netbirdio/netbird/shared/netiputil"
 	auth "github.com/netbirdio/netbird/shared/relay/auth/hmac"
 	relayClient "github.com/netbirdio/netbird/shared/relay/client"
@@ -147,6 +152,7 @@ type EngineConfig struct {
 	BlockLANAccess      bool
 	BlockInbound        bool
 	DisableIPv6         bool
+	SyncMessageVersion  *int
 
 	// LazyConnection is the MDM-sourced lazy-connection override; StateUnset defers to
 	// the env var and management feature flag.
@@ -176,6 +182,9 @@ type EngineServices struct {
 	UpdateManager  *updater.Manager
 	ClientMetrics  *metrics.ClientMetrics
 	MetricsCtx     context.Context
+	// NetState gates the reconnection loops on OS-reported network
+	// availability; nil disables gating.
+	NetState *netstate.State
 }
 
 // Engine is a mechanism responsible for reacting on Signal and Management stream events and managing connections to the remote peers.
@@ -199,6 +208,10 @@ type Engine struct {
 	config    *EngineConfig
 	mobileDep MobileDependency
 
+	// netState gates the peer reconnection guards on OS-reported network
+	// availability; nil disables gating.
+	netState *netstate.State
+
 	// STUNs is a list of STUN servers used by ICE
 	STUNs []*stun.URI
 	// TURNs is a list of STUN servers used by ICE
@@ -219,6 +232,13 @@ type Engine struct {
 
 	// networkSerial is the latest CurrentSerial (state ID) of the network sent by the Management service
 	networkSerial uint64
+
+	// latestComponents is the most-recent NetworkMapComponents decoded from
+	// a NetworkMapEnvelope (capability=3 peers only). Held alongside the
+	// NetworkMap that Calculate() produced from it so future incremental
+	// updates have a base to apply changes against. nil for legacy-format
+	// peers. Guarded by syncMsgMux.
+	latestComponents *types.NetworkMapComponents
 
 	networkMonitor *networkmonitor.NetworkMonitor
 
@@ -274,6 +294,20 @@ type Engine struct {
 	jobExecutorWG sync.WaitGroup
 
 	exposeManager *expose.Manager
+
+	sessionWatcher sessionDeadlineWatcher
+}
+
+// sessionDeadlineWatcher is the engine-facing surface of the SSO session
+// expiry watcher. The concrete implementation (sessionwatch.Watcher) is wired
+// in via newSessionWatcher, which is build-tagged so the js/wasm build links a
+// no-op stub instead of pulling the full sessionwatch package (and its timer
+// machinery) into the binary — the wasm client never runs the engine's
+// session-warning flow.
+type sessionDeadlineWatcher interface {
+	Update(deadline time.Time) error
+	Dismiss()
+	Close()
 }
 
 // Peer is an instance of the Connection Peer
@@ -311,6 +345,7 @@ func NewEngine(
 		syncMsgMux:         &sync.Mutex{},
 		config:             config,
 		mobileDep:          mobileDep,
+		netState:           services.NetState,
 		STUNs:              []*stun.URI{},
 		TURNs:              []*stun.URI{},
 		networkSerial:      0,
@@ -325,6 +360,17 @@ func NewEngine(
 		updateManager:      services.UpdateManager,
 		syncStoreDir:       config.StateDir,
 	}
+	// sessionWatcher keeps the SubscribeStatus consumers in sync with the
+	// session expiry deadline. Deadline-change ticks come for free via
+	// Status.SetSessionExpiresAt; the watcher exists to push a wake-up at
+	// T-WarningLead and T-FinalWarningLead so the UI repaints the remaining
+	// time / warning state even when nothing else changed, and to publish
+	// two SystemEvents (the warning composition lives in sessionwatch so
+	// the wire format stays owned by one package):
+	//   - T-WarningLead   → interactive "Extend now / Dismiss" notification
+	//   - T-FinalWarningLead → auto-opened SessionAboutToExpire dialog,
+	//     suppressed when the user dismissed the earlier warning
+	engine.sessionWatcher = newSessionWatcher(engine.statusRecorder)
 
 	log.Infof("I am: %s", config.WgPrivateKey.PublicKey().String())
 	return engine
@@ -389,6 +435,10 @@ func (e *Engine) stopLocked() {
 
 	if e.srWatcher != nil {
 		e.srWatcher.Close()
+	}
+
+	if e.sessionWatcher != nil {
+		e.sessionWatcher.Close()
 	}
 
 	if e.updateManager != nil {
@@ -522,7 +572,7 @@ func (e *Engine) Start(netbirdConfig *mgmProto.NetbirdConfig, mgmtURL *url.URL) 
 		} else {
 			log.Infof("running rosenpass in strict mode")
 		}
-		e.rpManager, err = rosenpass.NewManager(e.config.PreSharedKey, e.config.WgIfaceName)
+		e.rpManager, err = rosenpass.NewManager(e.config.PreSharedKey, e.config.WgIfaceName, publicKey)
 		if err != nil {
 			return fmt.Errorf("create rosenpass manager: %w", err)
 		}
@@ -532,12 +582,7 @@ func (e *Engine) Start(netbirdConfig *mgmProto.NetbirdConfig, mgmtURL *url.URL) 
 	}
 	e.stateManager.Start()
 
-	initialRoutes, dnsConfig, dnsFeatureFlag, err := e.readInitialSettings()
-	if err != nil {
-		return fmt.Errorf("read initial settings: %w", err)
-	}
-
-	dnsServer, err := e.newDnsServer(dnsConfig)
+	dnsServer, err := e.newDnsServer()
 	if err != nil {
 		return fmt.Errorf("create dns server: %w", err)
 	}
@@ -555,10 +600,8 @@ func (e *Engine) Start(netbirdConfig *mgmProto.NetbirdConfig, mgmtURL *url.URL) 
 		WGInterface:         e.wgInterface,
 		StatusRecorder:      e.statusRecorder,
 		RelayManager:        e.relayManager,
-		InitialRoutes:       initialRoutes,
 		StateManager:        e.stateManager,
 		DNSServer:           dnsServer,
-		DNSFeatureFlag:      dnsFeatureFlag,
 		PeerStore:           e.peerStore,
 		DisableClientRoutes: e.config.DisableClientRoutes,
 		DisableServerRoutes: e.config.DisableServerRoutes,
@@ -623,7 +666,23 @@ func (e *Engine) Start(netbirdConfig *mgmProto.NetbirdConfig, mgmtURL *url.URL) 
 	iceCfg := e.createICEConfig()
 
 	e.connMgr = NewConnMgr(e.config, e.statusRecorder, e.peerStore, wgIface)
+	e.connMgr.SetRoutedIPsReconciler(func(peerKey string) error {
+		if e.routeManager == nil {
+			return nil
+		}
+		return e.routeManager.ReconcilePeerAllowedIPs(peerKey)
+	})
 	e.connMgr.Start(e.ctx)
+
+	// Wire DNS-time lazy-connection warm-up now that the connection manager
+	// exists (it does not at DNS-server construction time). A DNS answer that
+	// points at an idle peer then wakes it before the client's first request.
+	e.dnsServer.SetPeerActivator(&dnsPeerActivator{
+		connMgr:   e.connMgr,
+		peerStore: e.peerStore,
+		status:    e.statusRecorder,
+		ctx:       e.ctx,
+	})
 
 	e.srWatcher = guard.NewSRWatcher(e.signal, e.relayManager, e.mobileDep.IFaceDiscover, iceCfg)
 	e.srWatcher.Start(peer.IsForceRelayed())
@@ -932,8 +991,14 @@ func (e *Engine) handleSync(update *mgmProto.SyncResponse) error {
 		return e.ctx.Err()
 	}
 
-	if update.NetworkMap != nil && update.NetworkMap.PeerConfig != nil {
-		e.handleAutoUpdateVersion(update.NetworkMap.PeerConfig.AutoUpdate)
+	e.ApplySessionDeadline(update.GetSessionExpiresAt())
+
+	// Envelope sync responses carry PeerConfig at the top level; legacy
+	// NetworkMap syncs carry it under NetworkMap.PeerConfig.
+	if pc := update.GetPeerConfig(); pc != nil {
+		e.handleAutoUpdateVersion(pc.GetAutoUpdate())
+	} else if nm := update.GetNetworkMap(); nm != nil && nm.GetPeerConfig() != nil {
+		e.handleAutoUpdateVersion(nm.GetPeerConfig().GetAutoUpdate())
 	}
 
 	done := e.phase("netbird_config")
@@ -943,12 +1008,47 @@ func (e *Engine) handleSync(update *mgmProto.SyncResponse) error {
 		return err
 	}
 
+	// Decode the network map from either the components envelope or the
+	// legacy proto.NetworkMap before the posture-check gating below, so the
+	// "is there a network map" decision covers both wire shapes.
+	var (
+		nm         *mgmProto.NetworkMap
+		components *types.NetworkMapComponents
+	)
+	if version := update.GetVersion(); version == int32(sharedgrpc.ComponentNetworkMap) {
+		// Components-format peer: decode the envelope back to typed
+		// components, run Calculate() locally, and convert to the wire
+		// NetworkMap shape the rest of the engine consumes. Components are
+		// retained so future incremental updates can apply deltas instead
+		// of doing a full reconstruction.
+		envelope := update.GetNetworkMapEnvelope()
+		if envelope == nil {
+			return fmt.Errorf("received a SyncReponse indicating use of components network map, but components are missing")
+		}
+
+		localKey := e.config.WgPrivateKey.PublicKey().String()
+		dnsName := ""
+		if pc := update.GetPeerConfig(); pc != nil {
+			// PeerConfig.Fqdn = "<dns_label>.<dns_domain>" — extract the
+			// shared domain by stripping the peer's own label prefix. Falls
+			// back to empty if the FQDN doesn't have the expected shape.
+			dnsName = extractDNSDomainFromFQDN(pc.GetFqdn())
+		}
+		result, err := nbnetworkmap.EnvelopeToNetworkMap(e.ctx, envelope, localKey, dnsName)
+		if err != nil {
+			return fmt.Errorf("decode network map envelope: %w", err)
+		}
+		nm = result.NetworkMap
+		components = result.Components
+	} else {
+		nm = update.GetNetworkMap()
+	}
+
 	// Posture checks are bound to the network map presence:
 	//   NetworkMap != nil, checks present -> apply the received checks
 	//   NetworkMap != nil, checks nil     -> posture checks were removed, clear them
 	//   NetworkMap == nil                 -> config-only update (e.g. relay token rotation),
 	//                                        leave the previously applied checks untouched
-	nm := update.GetNetworkMap()
 	if nm == nil {
 		return nil
 	}
@@ -961,6 +1061,14 @@ func (e *Engine) handleSync(update *mgmProto.SyncResponse) error {
 	}
 
 	done = e.phase("persist")
+	// Only retain the components view when the server sent the envelope
+	// path. A legacy proto.NetworkMap means components == nil; writing it
+	// here would clobber a previously-cached snapshot, breaking the
+	// incremental-delta base on a future envelope sync.
+	if components != nil {
+		e.latestComponents = components
+	}
+
 	e.persistSyncResponse(update)
 	done()
 
@@ -972,6 +1080,19 @@ func (e *Engine) handleSync(update *mgmProto.SyncResponse) error {
 	e.statusRecorder.PublishEvent(cProto.SystemEvent_INFO, cProto.SystemEvent_SYSTEM, "Network map updated", "", nil)
 
 	return nil
+}
+
+// extractDNSDomainFromFQDN returns the trailing dotted domain part of the
+// receiving peer's FQDN — the same value the management server fills as
+// dnsName when it builds the legacy NetworkMap. "peer42.netbird.cloud" →
+// "netbird.cloud". An empty string is returned for unrecognized formats.
+func extractDNSDomainFromFQDN(fqdn string) string {
+	for i := 0; i < len(fqdn); i++ {
+		if fqdn[i] == '.' && i+1 < len(fqdn) {
+			return fqdn[i+1:]
+		}
+	}
+	return ""
 }
 
 // updateNetbirdConfig applies the management-provided NetBird configuration:
@@ -1133,6 +1254,7 @@ func (e *Engine) applyInfoFlags(info *system.Info) {
 		e.config.BlockLANAccess,
 		e.config.BlockInbound,
 		e.config.DisableIPv6,
+		e.config.SyncMessageVersion,
 		e.config.EnableSSHRoot,
 		e.config.EnableSSHSFTP,
 		e.config.EnableSSHLocalPortForwarding,
@@ -1267,12 +1389,13 @@ func (e *Engine) handleBundle(params *mgmProto.BundleParameters) (*mgmProto.JobR
 		ClientMetrics:  e.clientMetrics,
 		DaemonVersion:  version.NetbirdVersion(),
 		RefreshStatus: func() {
-			e.RunHealthProbes(true)
+			e.RunHealthProbes(e.ctx, true)
 		},
 	}
 
 	bundleJobParams := debug.BundleConfig{
 		Anonymize:         params.Anonymize,
+		AnonymizeLevel:    anonymize.ParseLevel(params.AnonymizeLevel),
 		IncludeSystemInfo: true,
 		LogFileCount:      uint32(params.LogFileCount),
 	}
@@ -1779,7 +1902,8 @@ func (e *Engine) createPeerConn(pubKey string, allowedIPs []netip.Prefix, agentV
 			Addr:           e.getRosenpassAddr(),
 			PermissiveMode: e.config.RosenpassPermissive,
 		},
-		ICEConfig: e.createICEConfig(),
+		ICEConfig:    e.createICEConfig(),
+		NetworkState: e.netState,
 	}
 
 	serviceDependencies := peer.ServiceDependencies{
@@ -1983,41 +2107,6 @@ func (e *Engine) close() {
 	}
 }
 
-func (e *Engine) readInitialSettings() ([]*route.Route, *nbdns.Config, bool, error) {
-	if runtime.GOOS != "android" {
-		// nolint:nilnil
-		return nil, nil, false, nil
-	}
-
-	info := system.GetInfo(e.ctx)
-	info.SetFlags(
-		e.config.RosenpassEnabled,
-		e.config.RosenpassPermissive,
-		&e.config.ServerSSHAllowed,
-		e.config.DisableClientRoutes,
-		e.config.DisableServerRoutes,
-		e.config.DisableDNS,
-		e.config.DisableFirewall,
-		e.config.BlockLANAccess,
-		e.config.BlockInbound,
-		e.config.DisableIPv6,
-		e.config.EnableSSHRoot,
-		e.config.EnableSSHSFTP,
-		e.config.EnableSSHLocalPortForwarding,
-		e.config.EnableSSHRemotePortForwarding,
-		e.config.DisableSSHAuth,
-	)
-
-	netMap, err := e.mgmClient.GetNetworkMap(info)
-	if err != nil {
-		return nil, nil, false, err
-	}
-	routes := toRoutes(netMap.GetRoutes())
-	dnsCfg := toDNSConfig(netMap.GetDNSConfig(), e.wgInterface.Address())
-	dnsFeatureFlag := toDNSFeatureFlag(netMap)
-	return routes, &dnsCfg, dnsFeatureFlag, nil
-}
-
 func (e *Engine) newWgIface() (*iface.WGIface, error) {
 	transportNet, err := e.newStdNet()
 	if err != nil {
@@ -2052,7 +2141,7 @@ func (e *Engine) newWgIface() (*iface.WGIface, error) {
 func (e *Engine) wgInterfaceCreate() (err error) {
 	switch runtime.GOOS {
 	case "android":
-		err = e.wgInterface.CreateOnAndroid(e.routeManager.InitialRouteRange(), e.dnsServer.DnsIP().String(), e.dnsServer.SearchDomains())
+		err = e.wgInterface.CreateOnAndroid(e.routeManager.CurrentRouteRange(), e.dnsServer.DnsIP().String(), e.dnsServer.SearchDomains())
 	case "ios":
 		e.mobileDep.NetworkChangeListener.SetInterfaceIP(e.config.WgAddr.String())
 		if e.config.WgAddr.HasIPv6() {
@@ -2065,7 +2154,7 @@ func (e *Engine) wgInterfaceCreate() (err error) {
 	return err
 }
 
-func (e *Engine) newDnsServer(dnsConfig *nbdns.Config) (dns.Server, error) {
+func (e *Engine) newDnsServer() (dns.Server, error) {
 	// due to tests where we are using a mocked version of the DNS server
 	if e.dnsServer != nil {
 		return e.dnsServer, nil
@@ -2077,7 +2166,7 @@ func (e *Engine) newDnsServer(dnsConfig *nbdns.Config) (dns.Server, error) {
 			e.ctx,
 			e.wgInterface,
 			e.mobileDep.HostDNSAddresses,
-			*dnsConfig,
+			nbdns.Config{},
 			e.mobileDep.NetworkChangeListener,
 			e.statusRecorder,
 			e.config.DisableDNS,
@@ -2193,7 +2282,20 @@ func (e *Engine) getRosenpassAddr() string {
 
 // RunHealthProbes executes health checks for Signal, Management, Relay, and WireGuard services
 // and updates the status recorder with the latest states.
-func (e *Engine) RunHealthProbes(waitForResult bool) bool {
+//
+// ctx scopes the (potentially slow) STUN/TURN probing: a caller that gives up —
+// e.g. a Status RPC whose client disconnected — cancels its ctx and the probe
+// returns instead of running to its per-component timeout. The engine's own
+// lifetime ctx still applies independently, so an engine shutdown aborts the
+// probe even if the caller's ctx is context.Background().
+func (e *Engine) RunHealthProbes(ctx context.Context, waitForResult bool) bool {
+	// Tie the caller's ctx to the engine lifetime: either cancelling aborts
+	// the probe below.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(e.ctx, cancel)
+	defer stop()
+
 	e.syncMsgMux.Lock()
 
 	signalHealthy := e.signal.IsHealthy()
@@ -2216,9 +2318,9 @@ func (e *Engine) RunHealthProbes(waitForResult bool) bool {
 	if runtime.GOOS != "js" {
 		var results []relay.ProbeResult
 		if waitForResult {
-			results = e.probeStunTurn.ProbeAllWaitResult(e.ctx, stuns, turns)
+			results = e.probeStunTurn.ProbeAllWaitResult(ctx, stuns, turns)
 		} else {
-			results = e.probeStunTurn.ProbeAll(e.ctx, stuns, turns)
+			results = e.probeStunTurn.ProbeAll(ctx, stuns, turns)
 		}
 		e.statusRecorder.UpdateRelayStates(results)
 
@@ -2470,7 +2572,7 @@ func (e *Engine) SetCapture(pc device.PacketCapture) error {
 	}
 
 	afc := capture.NewAFPacketCapture(intf.Name(), sess)
-	if err := afc.Start(); err != nil {
+	if err := afc.Start(); err != nil { //nolint:staticcheck // always errors on non-Linux builds
 		return fmt.Errorf("start AF_PACKET capture on %s: %w", intf.Name(), err)
 	}
 	e.afpacketCapture = afc
@@ -2561,13 +2663,14 @@ func (e *Engine) updateForwardRules(rules []*mgmProto.ForwardingRule) ([]firewal
 
 func (e *Engine) toExcludedLazyPeers(rules []firewallManager.ForwardRule, peers []*mgmProto.RemotePeerConfig) map[string]bool {
 	excludedPeers := make(map[string]bool)
+
+	// Ingress forward targets: inbound forwarded traffic is initiated remotely and
+	// cannot wake a lazy connection, so the peer routing the target must stay
+	// permanently connected. AllowedIPs are already parsed on the peer conn, so
+	// reuse those typed prefixes instead of re-parsing the network map strings.
 	for _, r := range rules {
-		ip := r.TranslatedAddress
 		for _, p := range peers {
-			for _, allowedIP := range p.GetAllowedIps() {
-				if allowedIP != ip.String() {
-					continue
-				}
+			if e.peerRoutesAddr(p, r.TranslatedAddress) {
 				log.Infof("exclude forwarder peer from lazy connection: %s", p.GetWgPubKey())
 				excludedPeers[p.GetWgPubKey()] = true
 			}
@@ -2575,6 +2678,27 @@ func (e *Engine) toExcludedLazyPeers(rules []firewallManager.ForwardRule, peers 
 	}
 
 	return excludedPeers
+}
+
+// peerRoutesAddr reports whether the peer is a router for addr, matched against
+// the peer's already-parsed AllowedIPs from the store (the same typed value the
+// lazy manager consumes) rather than re-parsing the network map strings.
+func (e *Engine) peerRoutesAddr(p *mgmProto.RemotePeerConfig, addr netip.Addr) bool {
+	prefixes, ok := e.peerStore.AllowedIPs(p.GetWgPubKey())
+	if !ok {
+		return false
+	}
+	return prefixesContain(prefixes, addr)
+}
+
+// prefixesContain reports whether addr falls within any of the prefixes.
+func prefixesContain(prefixes []netip.Prefix, addr netip.Addr) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 // isChecksEqual checks if two slices of checks are equal.
