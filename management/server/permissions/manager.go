@@ -9,6 +9,7 @@ import (
 
 	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/management/server/activity"
+	"github.com/netbirdio/netbird/management/server/blockeduser"
 	nbcontext "github.com/netbirdio/netbird/management/server/context"
 	"github.com/netbirdio/netbird/management/server/permissions/modules"
 	"github.com/netbirdio/netbird/management/server/permissions/operations"
@@ -58,11 +59,11 @@ func (m *managerImpl) ValidateUserPermissions(
 	}
 
 	if user.IsBlocked() && !user.PendingApproval {
-		return false, ctx, status.NewUserBlockedError()
+		return false, ctx, status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user is blocked"))
 	}
 
 	if user.IsBlocked() && user.PendingApproval {
-		return false, ctx, status.NewUserPendingApprovalError()
+		return false, ctx, status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user is pending approval"))
 	}
 
 	ctxEnriched, err := m.ValidateAccountAccess(ctx, accountID, user, false)

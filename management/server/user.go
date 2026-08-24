@@ -19,6 +19,7 @@ import (
 	"github.com/netbirdio/netbird/management/server/account"
 	"github.com/netbirdio/netbird/management/server/activity"
 	"github.com/netbirdio/netbird/management/server/affectedpeers"
+	"github.com/netbirdio/netbird/management/server/blockeduser"
 	"github.com/netbirdio/netbird/management/server/idp"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/permissions/modules"
@@ -1457,7 +1458,7 @@ func (am *DefaultAccountManager) GetCurrentUserInfo(ctx context.Context, userAut
 	}
 
 	if user.IsBlocked() {
-		return nil, status.NewUserBlockedError()
+		return nil, status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user is blocked"))
 	}
 
 	if user.IsServiceUser {
