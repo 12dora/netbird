@@ -2,7 +2,7 @@
 """模拟用户在浏览器完成 Authentik 登录 + RFC8628 设备码授权。
 
 用法: ak_device_login.py <username> <password> <user_code>
-仅用标准库; 基址来自 AUTH_BASE_URL(默认 https://auth.example.com)。
+仅用标准库; 基址来自 AUTH_BASE_URL,否则脚本旁 .env,再否则 https://auth.example.com。
 """
 import http.cookiejar
 import json
@@ -12,7 +12,41 @@ import sys
 import urllib.parse
 import urllib.request
 
-BASE = os.environ.get("AUTH_BASE_URL", "https://auth.example.com")
+
+def _env_file_value(path: str, key: str) -> str:
+    found = ""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                if k.strip() != key:
+                    continue
+                v = v.strip()
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+                    v = v[1:-1]
+                found = v
+    except OSError:
+        return ""
+    return found
+
+
+def _auth_base_url() -> str:
+    env_val = os.environ.get("AUTH_BASE_URL", "")
+    if env_val:
+        return env_val
+    here = os.path.dirname(os.path.abspath(__file__))
+    val = _env_file_value(os.path.join(here, ".env"), "AUTH_BASE_URL")
+    if val:
+        return val
+    return "https://auth.example.com"
+
+
+BASE = _auth_base_url()
 CTX = ssl.create_default_context()
 
 

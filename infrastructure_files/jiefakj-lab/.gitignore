@@ -7,3 +7,4 @@ management.json
 *.setupkey
 *.gid
 *.id
+__pycache__/

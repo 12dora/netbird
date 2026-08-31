@@ -31,7 +31,7 @@ unauth-peer   vlan2(10.10.2.12) + nb-core   李四:未申请, 默认拒绝
 
 ```bash
 cd infrastructure_files/jiefakj-lab
-cp .env.example .env && $EDITOR .env            # 或用 .env.example 顶部一行 openssl 生成
+cp .env.example .env                            # 填三密钥(openssl rand -hex 24 / -hex 16 / -base64 32)与真实域名/IP
 cp turnserver.conf.example turnserver.conf      # 把口令换成 .env 的 TURN_PASSWORD
 sh render-management-json.sh                    # 按 .env 的 AUTH_DOMAIN 生成 management.json
 docker compose up -d

@@ -21,11 +21,30 @@ if [ ! -f "$EXAMPLE" ]; then
 	exit 1
 fi
 
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
+if [ -z "${AUTH_DOMAIN:-}" ]; then
+	AUTH_DOMAIN=$(sed -n 's/^AUTH_DOMAIN=//p' "$ENV_FILE" | tail -n 1)
+fi
 
-: "${AUTH_DOMAIN:?AUTH_DOMAIN must be set}"
+case "$AUTH_DOMAIN" in
+	'"'*'"')
+		AUTH_DOMAIN=${AUTH_DOMAIN#\"}
+		AUTH_DOMAIN=${AUTH_DOMAIN%\"}
+		;;
+	"'"*"'")
+		AUTH_DOMAIN=${AUTH_DOMAIN#\'}
+		AUTH_DOMAIN=${AUTH_DOMAIN%\'}
+		;;
+esac
 
-sed "s|auth\\.example\\.com|${AUTH_DOMAIN}|g" "$EXAMPLE" >"$OUT"
+case "$AUTH_DOMAIN" in
+	'' | *[!A-Za-z0-9.-]*)
+		echo "invalid AUTH_DOMAIN: ${AUTH_DOMAIN}" >&2
+		exit 1
+		;;
+esac
+
+if ! sed "s|auth\\.example\\.com|${AUTH_DOMAIN}|g" "$EXAMPLE" >"$OUT.tmp"; then
+	rm -f "$OUT.tmp"
+	exit 1
+fi
+mv "$OUT.tmp" "$OUT"
