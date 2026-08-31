@@ -51,6 +51,8 @@
 
 ## 3. management 配置基线(management.json)
 
+真实域名写在 `infrastructure_files/jiefakj-lab/.env`(不入库); 联调栈用 `render-management-json.sh` 从 `management.json.example` 生成 `management.json`。
+
 | 配置 | 值 | 原因 |
 |------|-----|------|
 | `IdpManagerConfig.ManagerType` | **`none`** | 授权与目录都由 EasyAuth 推送,NetBird 无需回调 Authentik 管理目录(其 authentik IdP-manager 的 CreateUser 本就是 stub)。省去 service account 口令,减小暴露面。用户 name/email 由 P1 预创建写入、JIT 从 JWT claims 补齐 |

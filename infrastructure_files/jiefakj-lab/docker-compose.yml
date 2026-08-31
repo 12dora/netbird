@@ -9,7 +9,7 @@
 #   office-peer --wireguard--> router-peer(vlan1 路由 peer, masquerade)--> secret-server
 #
 # 依赖外部服务(已在本机运行):
-#   Authentik  https://auth.example.com(远端 nginx 隧道回本机 :19000)
+#   Authentik  外部 IdP(远端 nginx 隧道回本机 :19000; 主机名见 AUTH_DOMAIN)
 #   EasyAuth   http://127.0.0.1:8001(容器经 host.docker.internal:33073 访问本管理面)
 
 x-default: &default
@@ -45,7 +45,7 @@ services:
       - NETBIRD_MGMT_GRPC_API_ENDPOINT=http://localhost:33073
       - AUTH_AUDIENCE=netbird
       - AUTH_CLIENT_ID=netbird
-      - AUTH_AUTHORITY=https://auth.example.com/application/o/netbird/
+      - AUTH_AUTHORITY=https://${AUTH_DOMAIN:?AUTH_DOMAIN must be set}/application/o/netbird/
       - USE_AUTH0=false
       - AUTH_SUPPORTED_SCOPES=openid profile email offline_access
       - AUTH_REDIRECT_URI=/nb-auth
@@ -88,22 +88,22 @@ services:
       - ./management.json:/etc/netbird/management.json:ro
     ports:
       - "127.0.0.1:33073:443"
-    # 宿主 Surge 在 TUN/fake-IP 档位下会把 example.com 解析成 198.18.x 并经代理转发,
+    # 宿主 Surge 在 TUN/fake-IP 档位下会把 IdP 域名解析成 198.18.x 并经代理转发,
     # 容器经宿主 DNS 继承该结果后 TLS 握手 EOF → OIDC 发现失败 → 管理面反复重启。
-    # 钉死 VPS 真实 IP,绕过宿主的 fake-IP 路径(与 EasyTrade/EasyAuth 的处理一致)。
+    # 钉死 AUTH_DOMAIN_IP,绕过宿主的 fake-IP 路径(与 EasyTrade/EasyAuth 的处理一致)。
     extra_hosts:
-      - "auth.example.com:203.0.113.10"
+      - "${AUTH_DOMAIN:?AUTH_DOMAIN must be set}:${AUTH_DOMAIN_IP:?AUTH_DOMAIN_IP must be set}"
     environment:
       - TURN_PASSWORD=${TURN_PASSWORD}
       - NETBIRD_RELAY_AUTH_SECRET=${NETBIRD_RELAY_AUTH_SECRET}
       - NETBIRD_DATASTORE_ENC_KEY=${NETBIRD_DATASTORE_ENC_KEY}
-      - NB_BLOCKED_USER_MESSAGE=无 VPN 权限，请前往 https://iam.example.com 申请
+      - NB_BLOCKED_USER_MESSAGE=无 VPN 权限，请前往 https://${IAM_DOMAIN:?IAM_DOMAIN must be set} 申请
     command: [
       "--port", "443",
       "--log-file", "console",
       "--log-level", "info",
       "--disable-anonymous-metrics=true",
-      "--single-account-mode-domain=example.com",
+      "--single-account-mode-domain=${NETBIRD_DOMAIN:?NETBIRD_DOMAIN must be set}",
       "--dns-domain=netbird.selfhosted"
     ]
     networks: [nb-core]

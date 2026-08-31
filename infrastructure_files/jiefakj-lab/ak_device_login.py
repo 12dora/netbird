@@ -2,16 +2,17 @@
 """模拟用户在浏览器完成 Authentik 登录 + RFC8628 设备码授权。
 
 用法: ak_device_login.py <username> <password> <user_code>
-仅用标准库; 走公网域名 https://auth.example.com (与真实用户一致)。
+仅用标准库; 基址来自 AUTH_BASE_URL(默认 https://auth.example.com)。
 """
 import http.cookiejar
 import json
+import os
 import ssl
 import sys
 import urllib.parse
 import urllib.request
 
-BASE = "https://auth.example.com"
+BASE = os.environ.get("AUTH_BASE_URL", "https://auth.example.com")
 CTX = ssl.create_default_context()
 
 

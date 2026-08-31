@@ -25,6 +25,7 @@ unauth-peer   vlan2(10.10.2.12) + nb-core   李四:未申请, 默认拒绝
   `docker build -f management/Dockerfile.multistage -t netbird-management-jiefakj:local .`(在仓库根)
 - Authentik 已建 `netbird` OIDC 应用(public client、device_code grant、sub_mode=user_uuid、brand 绑定设备码流程)。
 - `management.json` 里的 IdP 端点指向 `https://auth.example.com/application/o/netbird/`。
+- 真实域名与 IP 写在 `.env`(不入库); `sh render-management-json.sh` 从 `management.json.example` 按 `AUTH_DOMAIN` 生成 `management.json`。
 
 ## 启动
 
@@ -32,6 +33,7 @@ unauth-peer   vlan2(10.10.2.12) + nb-core   李四:未申请, 默认拒绝
 cd infrastructure_files/jiefakj-lab
 cp .env.example .env && $EDITOR .env            # 或用 .env.example 顶部一行 openssl 生成
 cp turnserver.conf.example turnserver.conf      # 把口令换成 .env 的 TURN_PASSWORD
+sh render-management-json.sh                    # 按 .env 的 AUTH_DOMAIN 生成 management.json
 docker compose up -d
 ```
 
