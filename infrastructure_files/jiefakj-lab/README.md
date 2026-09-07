@@ -60,3 +60,20 @@ python3 ak_device_login.py <username> <password> <user_code>
 | 3 撤权即断 | EasyAuth 撤销张三 → 事件对账 | 移组+block, 网络图即时重推, 张三访问保密网段超时 |
 
 `ak_device_login.py` 走公网 `auth.example.com`,与真实用户路径一致,仅用标准库。
+
+## SSO peer ownership transfer
+
+A full peer login with a valid JWT from another approved, unblocked user in the
+same account transfers an existing SSO peer to that user, including after login
+expiration. The peer keeps its ID, IP, DNS label, public key and expiration
+preferences. The new owner's auto groups are added; old-owner auto groups absent
+from the new owner's list are removed. The All group and unrelated manual group
+memberships are preserved. Peer and user login timestamps are refreshed together,
+and network maps are updated for both former and new access relationships.
+
+The activity log records `PeerOwnershipTransferred` (`peer.ownership.transfer`,
+"Peer ownership transferred"), with the new user as initiator, the peer as target,
+and `previous_user` in the peer metadata. Setup-key peers, users from other
+accounts, missing users, blocked users and users pending approval cannot take
+ownership. Session extension still requires the current owner; it does not
+transfer ownership.

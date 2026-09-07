@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/mock/gomock"
 	"github.com/rs/xid"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"golang.org/x/exp/maps"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
@@ -49,6 +49,7 @@ import (
 
 	nbdns "github.com/netbirdio/netbird/dns"
 	"github.com/netbirdio/netbird/management/server/activity"
+	"github.com/netbirdio/netbird/management/server/blockeduser"
 	"github.com/netbirdio/netbird/management/server/geolocation"
 	nbpeer "github.com/netbirdio/netbird/management/server/peer"
 	"github.com/netbirdio/netbird/management/server/posture"
@@ -2516,6 +2517,284 @@ func TestLoginPeer_ApprovedUserCanLogin(t *testing.T) {
 
 	_, _, _, _, err = manager.LoginPeer(context.Background(), login)
 	require.NoError(t, err, "Regular user should be able to login peers")
+}
+
+type peerTransferFixture struct {
+	manager        *DefaultAccountManager
+	peer           *nbpeer.Peer
+	newUser        *types.User
+	allGroupID     string
+	updates        *update_channel.PeersUpdateManager
+	expectedGroups []string
+}
+
+func setupPeerTransfer(t *testing.T) peerTransferFixture {
+	t.Helper()
+	t.Setenv("NB_EVENT_ACTIVITY_LOG_ENABLED", "true")
+	ctx := context.Background()
+	manager, updates, err := createManager(t)
+	require.NoError(t, err)
+	account := newAccountWithId(ctx, "transfer-account", "user-a", "", "", "", true)
+	account.Settings.PeerLoginExpiration = time.Hour
+	all, err := account.GetGroupAll()
+	require.NoError(t, err)
+	account.Users["user-a"].AutoGroups = []string{"group-a", "group-shared", all.ID}
+	require.NoError(t, manager.Store.SaveAccount(ctx, account))
+	user := types.NewRegularUser("user-b", "", "")
+	user.AccountID = account.Id
+	user.AutoGroups = []string{"group-b", "group-shared"}
+	require.NoError(t, manager.Store.SaveUser(ctx, user))
+	for _, id := range []string{"group-a", "group-b", "group-shared", "manual-group"} {
+		require.NoError(t, manager.Store.CreateGroup(ctx, &types.Group{ID: id, AccountID: account.Id, Name: id, Issued: types.GroupIssuedAPI}))
+	}
+	key, err := wgtypes.GenerateKey()
+	require.NoError(t, err)
+	lastLogin := time.Now().UTC().Add(-30 * time.Minute)
+	peer := &nbpeer.Peer{
+		ID: "transfer-peer", AccountID: account.Id, UserID: "user-a",
+		Key: key.PublicKey().String(), IP: netip.MustParseAddr("100.64.0.10").Unmap(),
+		DNSLabel: "transfer-peer", Name: "transfer-peer",
+		Meta:   nbpeer.PeerSystemMeta{Hostname: "transfer-peer", OS: "darwin", WtVersion: "0.77.1"},
+		Status: &nbpeer.PeerStatus{}, LastLogin: &lastLogin,
+		LoginExpirationEnabled: true, InactivityExpirationEnabled: true,
+	}
+	require.NoError(t, manager.Store.AddPeerToAccount(ctx, peer))
+	for _, id := range []string{"group-a", "group-shared", "manual-group", all.ID} {
+		require.NoError(t, manager.Store.AddPeerToGroup(ctx, account.Id, peer.ID, id))
+	}
+	return peerTransferFixture{manager: manager, peer: peer, newUser: user, allGroupID: all.ID, updates: updates, expectedGroups: []string{"group-b", "group-shared", "manual-group", all.ID}}
+}
+
+func (f peerTransferFixture) login() types.PeerLogin {
+	return types.PeerLogin{WireGuardPubKey: f.peer.Key, UserID: f.newUser.Id, Meta: f.peer.Meta}
+}
+
+func assertPeerTransfer(t *testing.T, f peerTransferFixture) {
+	t.Helper()
+	ctx := context.Background()
+	before := time.Now().UTC()
+	networkBefore, err := f.manager.Store.GetAccountNetwork(ctx, store.LockingStrengthNone, f.peer.AccountID)
+	require.NoError(t, err)
+	loggedIn, network, _, _, err := f.manager.LoginPeer(ctx, f.login())
+	require.NoError(t, err)
+	saved, err := f.manager.Store.GetPeerByID(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	assert.Equal(t, f.newUser.Id, saved.UserID, "peer must belong to the JWT user")
+	assert.Equal(t, saved.UserID, loggedIn.UserID, "login response must contain the new owner")
+	assert.Equal(t, f.peer.ID, saved.ID, "peer ID must be preserved")
+	assert.Equal(t, f.peer.IP, saved.IP, "peer IP must be preserved")
+	assert.Equal(t, f.peer.Key, saved.Key, "peer public key must be preserved")
+	assert.Equal(t, f.peer.DNSLabel, saved.DNSLabel, "peer DNS label must be preserved")
+	assert.Equal(t, f.peer.LoginExpirationEnabled, saved.LoginExpirationEnabled, "login expiration preference must be preserved")
+	assert.Equal(t, f.peer.InactivityExpirationEnabled, saved.InactivityExpirationEnabled, "inactivity expiration preference must be preserved")
+	assert.False(t, saved.Status.LoginExpired, "transferred peer must be reauthenticated")
+	assert.False(t, saved.GetLastLogin().Before(before), "peer last login must be refreshed")
+	assert.Equal(t, loggedIn.GetLastLogin(), saved.GetLastLogin(), "response and stored login timestamps must agree")
+	user, err := f.manager.Store.GetUserByUserID(ctx, store.LockingStrengthNone, f.newUser.Id)
+	require.NoError(t, err)
+	assert.True(t, user.LastLogin.Equal(saved.GetLastLogin()), "new owner and peer must share one login timestamp")
+	groups, err := f.manager.Store.GetPeerGroupIDs(ctx, store.LockingStrengthNone, saved.AccountID, saved.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, f.expectedGroups, groups, "only old-owner exclusive auto groups must be removed")
+	assert.Equal(t, networkBefore.CurrentSerial()+1, network.CurrentSerial(), "transfer must increment network serial once")
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		events, err := f.manager.eventStore.Get(ctx, saved.AccountID, 0, 100, false)
+		if !assert.NoError(c, err) || !assert.Len(c, events, 1, "transfer must emit exactly one audit event") {
+			return
+		}
+		event := events[0]
+		assert.Equal(c, activity.PeerOwnershipTransferred, event.Activity, "event must use the new activity code")
+		assert.Equal(c, "peer.ownership.transfer", event.Activity.StringCode(), "event must describe ownership transfer")
+		assert.Equal(c, "Peer ownership transferred", event.Activity.Message(), "event message must be registered")
+		assert.Equal(c, f.newUser.Id, event.InitiatorID, "new owner must initiate the event")
+		assert.Equal(c, saved.ID, event.TargetID, "peer must be the event target")
+		expectedMeta := saved.EventMeta(f.manager.networkMapController.GetDNSDomain(&types.Settings{}))
+		expectedMeta["previous_user"] = f.peer.UserID
+		assert.Equal(c, expectedMeta, event.Meta, "event must retain peer metadata and previous owner")
+	}, time.Second, 10*time.Millisecond, "ownership event must be stored after commit")
+}
+
+func TestLoginPeer_DifferentUserSameAccountTransfersPeer(t *testing.T) {
+	assertPeerTransfer(t, setupPeerTransfer(t))
+}
+
+func TestLoginPeer_ExpiredPeerTransfersAndReauthenticates(t *testing.T) {
+	for _, markedExpired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("marked_expired_%t", markedExpired), func(t *testing.T) {
+			f := setupPeerTransfer(t)
+			oldLogin := time.Now().UTC().Add(-2 * time.Hour)
+			f.peer.LastLogin = &oldLogin
+			f.peer.Status.LoginExpired = markedExpired
+			require.NoError(t, f.manager.Store.SavePeer(context.Background(), f.peer.AccountID, f.peer))
+			assertPeerTransfer(t, f)
+		})
+	}
+}
+
+func assertPeerTransferRejected(t *testing.T, f peerTransferFixture, expected error) {
+	t.Helper()
+	ctx := context.Background()
+	before, err := f.manager.Store.GetPeerByID(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	groupsBefore, err := f.manager.Store.GetPeerGroupIDs(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	_, _, _, _, err = f.manager.LoginPeer(ctx, f.login())
+	require.EqualError(t, err, expected.Error())
+	gotStatus, ok := status.FromError(err)
+	require.True(t, ok, "rejection must carry a status")
+	wantStatus, ok := status.FromError(expected)
+	require.True(t, ok, "expected error must carry a status")
+	assert.Equal(t, wantStatus.Type(), gotStatus.Type(), "rejection status must be preserved")
+	after, err := f.manager.Store.GetPeerByID(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after, "rejected login must leave the peer untouched")
+	groupsAfter, err := f.manager.Store.GetPeerGroupIDs(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, groupsBefore, groupsAfter, "rejected login must leave groups untouched")
+	events, err := f.manager.eventStore.Get(ctx, f.peer.AccountID, 0, 100, false)
+	require.NoError(t, err)
+	assert.Empty(t, events, "rejected transfer must not emit an audit event")
+}
+
+func TestLoginPeer_DifferentAccountUserStillMismatch(t *testing.T) {
+	f := setupPeerTransfer(t)
+	f.newUser.AccountID = "other-account"
+	require.NoError(t, f.manager.Store.SaveAccount(context.Background(), newAccountWithId(context.Background(), "other-account", "other-owner", "", "", "", false)))
+	require.NoError(t, f.manager.Store.SaveUser(context.Background(), f.newUser))
+	assertPeerTransferRejected(t, f, status.NewPeerLoginMismatchError())
+}
+
+func TestLoginPeer_SetupKeyPeerRejectsUserJWT(t *testing.T) {
+	f := setupPeerTransfer(t)
+	f.peer.UserID = ""
+	f.peer.LoginExpirationEnabled = false
+	require.NoError(t, f.manager.Store.SavePeer(context.Background(), f.peer.AccountID, f.peer))
+	assertPeerTransferRejected(t, f, status.NewPeerLoginMismatchError())
+}
+
+func TestLoginPeer_TransferToBlockedUserRejected(t *testing.T) {
+	f := setupPeerTransfer(t)
+	t.Setenv(blockeduser.MessageEnv, "")
+	f.newUser.Blocked = true
+	require.NoError(t, f.manager.Store.SaveUser(context.Background(), f.newUser))
+	assertPeerTransferRejected(t, f, status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user is blocked")))
+}
+
+func TestLoginPeer_TransferToPendingApprovalUserRejected(t *testing.T) {
+	for _, override := range []string{"", "Request access from the administrator"} {
+		t.Run(override, func(t *testing.T) {
+			f := setupPeerTransfer(t)
+			t.Setenv(blockeduser.MessageEnv, override)
+			f.newUser.PendingApproval = true
+			require.NoError(t, f.manager.Store.SaveUser(context.Background(), f.newUser))
+			assertPeerTransferRejected(t, f, status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user pending approval cannot add peers")))
+		})
+	}
+}
+
+func TestLoginPeer_TransferWithMissingPreviousOwner(t *testing.T) {
+	f := setupPeerTransfer(t)
+	require.NoError(t, f.manager.Store.DeleteUser(context.Background(), f.peer.AccountID, f.peer.UserID))
+	f.expectedGroups = append(f.expectedGroups, "group-a")
+	assertPeerTransfer(t, f)
+}
+
+func TestLoginPeer_TransferToMissingUserRejected(t *testing.T) {
+	f := setupPeerTransfer(t)
+	require.NoError(t, f.manager.Store.DeleteUser(context.Background(), f.newUser.AccountID, f.newUser.Id))
+	assertPeerTransferRejected(t, f, status.NewPeerLoginMismatchError())
+}
+
+func TestLoginPeer_TransferRollsBackOnInvalidExtraDNSLabels(t *testing.T) {
+	f := setupPeerTransfer(t)
+	ctx := context.Background()
+	networkBefore, err := f.manager.Store.GetAccountNetwork(ctx, store.LockingStrengthNone, f.peer.AccountID)
+	require.NoError(t, err)
+	// This validation runs after the transfer's group and timestamp writes.
+	login := f.login()
+	login.ExtraDNSLabels = []string{"forbidden"}
+	_, _, _, _, err = f.manager.LoginPeer(ctx, login)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "doesn't allow extra DNS labels", "late login validation must reject the request")
+	saved, err := f.manager.Store.GetPeerByID(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	assert.Equal(t, f.peer.UserID, saved.UserID, "owner change must roll back")
+	assert.Equal(t, f.peer.GetLastLogin(), saved.GetLastLogin(), "peer last login must roll back")
+	user, err := f.manager.Store.GetUserByUserID(ctx, store.LockingStrengthNone, f.newUser.Id)
+	require.NoError(t, err)
+	assert.Equal(t, f.newUser.LastLogin, user.LastLogin, "new user last login must roll back")
+	groups, err := f.manager.Store.GetPeerGroupIDs(ctx, store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"group-a", "group-shared", "manual-group", f.allGroupID}, groups, "membership changes must roll back")
+	networkAfter, err := f.manager.Store.GetAccountNetwork(ctx, store.LockingStrengthNone, f.peer.AccountID)
+	require.NoError(t, err)
+	assert.Equal(t, networkBefore.CurrentSerial(), networkAfter.CurrentSerial(), "network serial must roll back")
+	events, err := f.manager.eventStore.Get(ctx, f.peer.AccountID, 0, 100, false)
+	require.NoError(t, err)
+	assert.Empty(t, events, "rolled back transfer must not emit an audit event")
+}
+
+func TestLoginPeer_SessionExtensionStillRejectsDifferentOwner(t *testing.T) {
+	f := setupPeerTransfer(t)
+	_, err := f.manager.ExtendPeerSession(context.Background(), f.peer.Key, f.newUser.Id)
+	require.EqualError(t, err, status.NewPeerLoginMismatchError().Error())
+	saved, err := f.manager.Store.GetPeerByID(context.Background(), store.LockingStrengthNone, f.peer.AccountID, f.peer.ID)
+	require.NoError(t, err)
+	assert.Equal(t, f.peer.UserID, saved.UserID, "session extension must not transfer ownership")
+	assert.Equal(t, f.peer.GetLastLogin(), saved.GetLastLogin(), "rejected extension must not refresh login")
+}
+
+func TestLoginPeer_TransferUpdatesFormerAndNewCounterparts(t *testing.T) {
+	f := setupPeerTransfer(t)
+	ctx := context.Background()
+	var channels []chan *network_map.UpdateMessage
+	for i, ownerGroup := range []string{"group-a", "group-b"} {
+		counterpart := f.peer.Copy()
+		counterpart.ID = fmt.Sprintf("counterpart-%d", i)
+		counterpart.DNSLabel = counterpart.ID
+		counterpart.IP = f.peer.IP.Next()
+		if i == 1 {
+			counterpart.IP = counterpart.IP.Next()
+		}
+		key, err := wgtypes.GenerateKey()
+		require.NoError(t, err)
+		counterpart.Key = key.PublicKey().String()
+		counterpart.UserID = ""
+		require.NoError(t, f.manager.Store.AddPeerToAccount(ctx, counterpart))
+		groupID := counterpart.ID + "-group"
+		require.NoError(t, f.manager.Store.CreateGroup(ctx, &types.Group{ID: groupID, AccountID: f.peer.AccountID, Name: groupID, Issued: types.GroupIssuedAPI}))
+		require.NoError(t, f.manager.Store.AddPeerToGroup(ctx, f.peer.AccountID, counterpart.ID, groupID))
+		require.NoError(t, f.manager.Store.AddPeerToGroup(ctx, f.peer.AccountID, counterpart.ID, f.allGroupID))
+		require.NoError(t, f.manager.Store.CreatePolicy(ctx, &types.Policy{
+			ID: groupID, AccountID: f.peer.AccountID, Name: groupID, Enabled: true,
+			Rules: []*types.PolicyRule{{ID: groupID, PolicyID: groupID, Enabled: true,
+				Action: types.PolicyTrafficActionAccept, Protocol: types.PolicyRuleProtocolALL,
+				Sources: []string{ownerGroup}, Destinations: []string{groupID}, Bidirectional: true}},
+		}))
+		channels = append(channels, f.updates.CreateChannel(ctx, counterpart.ID))
+		t.Cleanup(func() { f.updates.CloseChannel(ctx, counterpart.ID) })
+	}
+	_, _, _, _, err := f.manager.LoginPeer(ctx, f.login())
+	require.NoError(t, err)
+	for i, ch := range channels {
+		select {
+		case update := <-ch:
+			require.NotNil(t, update, "counterpart must receive a network map update")
+			var keys []string
+			for _, peers := range [][]*proto.RemotePeerConfig{update.Update.NetworkMap.RemotePeers, update.Update.NetworkMap.OfflinePeers} {
+				for _, remote := range peers {
+					keys = append(keys, remote.WgPubKey)
+				}
+			}
+			if i == 0 {
+				assert.NotContains(t, keys, f.peer.Key, "former counterpart must lose access to the transferred peer")
+			} else {
+				assert.Contains(t, keys, f.peer.Key, "new counterpart must gain access to the transferred peer")
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("counterpart %d did not receive an updated network map", i)
+		}
+	}
 }
 
 func TestHandleUserAddedPeer(t *testing.T) {

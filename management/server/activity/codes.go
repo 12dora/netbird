@@ -285,6 +285,9 @@ const (
 	AgentNetworkSettingsDeleted Activity = 142
 
 	AccountDeleted Activity = 99999
+
+	// PeerOwnershipTransferred indicates that an SSO peer changed owners on login.
+	PeerOwnershipTransferred Activity = 143
 )
 
 var activityMap = map[Activity]Code{
@@ -464,6 +467,8 @@ var activityMap = map[Activity]Code{
 	DomainAdded:     {"Domain added", "domain.add"},
 	DomainDeleted:   {"Domain deleted", "domain.delete"},
 	DomainValidated: {"Domain validated", "domain.validate"},
+
+	PeerOwnershipTransferred: {"Peer ownership transferred", "peer.ownership.transfer"},
 }
 
 // StringCode returns a string code of the activity

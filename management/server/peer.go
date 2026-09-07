@@ -1168,6 +1168,8 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 	var peer *nbpeer.Peer
 	var shouldStorePeer, shouldUpdatePeers bool
 	var peerGroupIDs []string
+	var previousUserID string
+	var ownershipSnapshot *affectedpeers.Snapshot
 
 	settings, err := am.Store.GetAccountSettings(ctx, store.LockingStrengthNone, accountID)
 	if err != nil {
@@ -1182,8 +1184,13 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 
 		if login.UserID != "" {
 			if peer.UserID != login.UserID {
-				log.Warnf("user mismatch when logging in peer %s: peer user %s, login user %s ", peer.ID, peer.UserID, login.UserID)
-				return status.NewPeerLoginMismatchError()
+				previousUserID = peer.UserID
+				ownershipSnapshot, err = transferPeerOwnership(ctx, transaction, peer, login)
+				if err != nil {
+					return err
+				}
+				shouldStorePeer = true
+				shouldUpdatePeers = true
 			}
 
 			changed, err := am.handleUserPeer(ctx, transaction, peer, settings)
@@ -1218,6 +1225,13 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 		return nil, nil, nil, false, err
 	}
 
+	if previousUserID != "" {
+		meta := peer.EventMeta(am.networkMapController.GetDNSDomain(settings))
+		meta["previous_user"] = previousUserID
+		am.StoreEvent(ctx, peer.UserID, peer.ID, accountID, activity.PeerOwnershipTransferred, meta)
+		log.WithContext(ctx).Infof("peer %s ownership transferred from user %s to user %s", peer.ID, previousUserID, peer.UserID)
+	}
+
 	// This is needed to keep in memory for the peer config. Otherwise browser client will end in a retry loop
 	peer.Meta = login.Meta
 
@@ -1239,12 +1253,87 @@ func (am *DefaultAccountManager) LoginPeer(ctx context.Context, login types.Peer
 	if shouldUpdatePeers {
 		changedPeerIDs := []string{peer.ID}
 		affectedPeerIDs := am.resolveAffectedPeersForPeerChanges(ctx, am.Store, accountID, changedPeerIDs)
+		if ownershipSnapshot != nil {
+			// Former counterparts also need the update that revokes their access.
+			affectedPeerIDs = append(affectedPeerIDs, ownershipSnapshot.Expand(ctx, accountID, affectedpeers.Change{ChangedPeerIDs: changedPeerIDs})...)
+			slices.Sort(affectedPeerIDs)
+			affectedPeerIDs = slices.Compact(affectedPeerIDs)
+		}
 		if err = am.networkMapController.OnPeersUpdated(ctx, accountID, changedPeerIDs, affectedPeerIDs); err != nil {
 			return nil, nil, nil, false, fmt.Errorf("notify network map controller of peer update: %w", err)
 		}
 	}
 
 	return peer, network, postureChecks, enableSSH, nil
+}
+
+func transferPeerOwnership(ctx context.Context, transaction store.Store, peer *nbpeer.Peer, login types.PeerLogin) (*affectedpeers.Snapshot, error) {
+	if login.UserID == "" || !peer.AddedWithSSOLogin() || peer.UserID == login.UserID {
+		return nil, status.NewPeerLoginMismatchError()
+	}
+	newUser, err := transaction.GetUserByUserID(ctx, store.LockingStrengthUpdate, login.UserID)
+	if err != nil {
+		if s, ok := status.FromError(err); ok && s.Type() == status.NotFound {
+			return nil, status.NewPeerLoginMismatchError()
+		}
+		return nil, err
+	}
+	if newUser.AccountID != peer.AccountID {
+		return nil, status.NewPeerLoginMismatchError()
+	}
+	if newUser.PendingApproval {
+		return nil, status.Errorf(status.PermissionDenied, "%s", blockeduser.Message("user pending approval cannot add peers"))
+	}
+	if err := checkIfPeerOwnerIsBlocked(peer, newUser); err != nil {
+		return nil, err
+	}
+
+	oldUser, err := transaction.GetUserByUserID(ctx, store.LockingStrengthNone, peer.UserID)
+	if err != nil {
+		if s, ok := status.FromError(err); !ok || s.Type() != status.NotFound {
+			return nil, err
+		}
+		oldUser = &types.User{}
+	}
+	snapshot, err := affectedpeers.Load(ctx, transaction, peer.AccountID, affectedpeers.Change{ChangedPeerIDs: []string{peer.ID}})
+	if err != nil {
+		return nil, err
+	}
+	if err := transferPeerAutoGroups(ctx, transaction, peer, oldUser, newUser); err != nil {
+		return nil, err
+	}
+
+	peer.UserID = newUser.Id
+	// Refresh before handleUserPeer so expired transfers use one login write and event.
+	peer = peer.UpdateLastLogin()
+	if err := transaction.SaveUserLastLogin(ctx, peer.AccountID, newUser.Id, peer.GetLastLogin()); err != nil {
+		return nil, err
+	}
+	if err := transaction.IncrementNetworkSerial(ctx, peer.AccountID); err != nil {
+		return nil, err
+	}
+	return snapshot, nil
+}
+
+func transferPeerAutoGroups(ctx context.Context, transaction store.Store, peer *nbpeer.Peer, oldUser, newUser *types.User) error {
+	allGroup, err := transaction.GetGroupByName(ctx, store.LockingStrengthNone, peer.AccountID, types.GroupAllName)
+	if err != nil {
+		return err
+	}
+	for _, groupID := range oldUser.AutoGroups {
+		if groupID == allGroup.ID || slices.Contains(newUser.AutoGroups, groupID) {
+			continue
+		}
+		if err := transaction.RemovePeerFromGroup(ctx, peer.ID, groupID); err != nil {
+			return err
+		}
+	}
+	for _, groupID := range newUser.AutoGroups {
+		if err := transaction.AddPeerToGroup(ctx, peer.AccountID, peer.ID, groupID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ExtendPeerSession refreshes the peer's SSO session deadline by updating
