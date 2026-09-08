@@ -66,7 +66,7 @@
 | `DataStoreEncryptionKey` | 强随机、密管托管 | 加密敏感列 |
 | TURN/Relay Secret | 强随机、公网端点 | 真实 NAT 穿透 |
 
-账户级设置(经管理 API,非 json):`UserApprovalRequired=true`(默认拒绝)、`GroupsPropagationEnabled=true`(组变更回溯已注册设备)、Peer login expiration **12–24h**(撤权兜底:即便 block 前有存活会话,到期强制重认证)。**JWT 组同步保持关闭**(授权单一来源)。
+账户级设置(经管理 API,非 json):`UserApprovalRequired=true`(默认拒绝)、`GroupsPropagationEnabled=true`(组变更回溯已注册设备)、Peer login expiration **关闭**(`peer_login_expiration_enabled=false`,2026-09-09 起:SSO 设备不再定期掉线重登;撤权/离职/冻结由 EasyAuth 置 `is_blocked=true` 触发 management `expireAndUpdatePeers`,该路径不看过期开关,会立即标记 login expired 并关闭 Sync 流,客户端进入 NeedsLogin;设置用 `apps/netbird/provision_account_settings.py` 幂等写入,勿直接改库——只有 API 路径会取消内存里的过期调度器)。**JWT 组同步保持关闭**(授权单一来源)。
 
 ## 4. Authentik 侧(一次性)
 
